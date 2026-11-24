@@ -51,7 +51,7 @@ class LLMError(Exception):
     pass
 
 
-def chat(messages: list[dict], model: str | None = None, temperature: float = 0.2, max_tokens: int = 1200, timeout: int = 120) -> str:
+def chat(messages: list[dict], model: str | None = None, temperature: float = 0.2, max_tokens: int = 1200, timeout: int = 120, task: str = "other") -> str:
     s = settings()
     if not (s["llm_base_url"] and s["llm_api_key"] and s["llm_model"]):
         raise LLMError("还没有配置大模型（管理 → 模型设置）")
@@ -69,6 +69,7 @@ def chat(messages: list[dict], model: str | None = None, temperature: float = 0.
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
+            _record(task, data.get("usage") or {}, messages, data)
             return data["choices"][0]["message"]["content"] or ""
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
@@ -79,6 +80,61 @@ def chat(messages: list[dict], model: str | None = None, temperature: float = 0.
             last = f"连接大模型失败：{e}"
         time.sleep(2 * (attempt + 1))
     raise LLMError(last or "大模型调用失败")
+
+
+def _record(task: str, usage: dict, messages: list[dict], data: dict):
+    """记用量：接口返回了 usage 就用它，没有就按字数粗估（中文约 1 字 ≈ 1 token）"""
+    try:
+        pt = int(usage.get("prompt_tokens") or 0) or sum(len(str(m.get("content", ""))) for m in messages)
+        ct = int(usage.get("completion_tokens") or 0) or len(str(data["choices"][0]["message"].get("content") or ""))
+        day = time.strftime("%Y-%m-%d")
+        with db.tx() as c:
+            if db.IS_PG:
+                c.execute("INSERT INTO llm_usage (day, task, calls, prompt_tokens, completion_tokens) VALUES (?, ?, 1, ?, ?) "
+                          "ON CONFLICT (day, task) DO UPDATE SET calls = llm_usage.calls + 1, prompt_tokens = llm_usage.prompt_tokens + EXCLUDED.prompt_tokens, "
+                          "completion_tokens = llm_usage.completion_tokens + EXCLUDED.completion_tokens", (day, task, pt, ct))
+            else:
+                c.execute("INSERT INTO llm_usage (day, task, calls, prompt_tokens, completion_tokens) VALUES (?, ?, 1, ?, ?) "
+                          "ON CONFLICT (day, task) DO UPDATE SET calls = calls + 1, prompt_tokens = prompt_tokens + excluded.prompt_tokens, "
+                          "completion_tokens = completion_tokens + excluded.completion_tokens", (day, task, pt, ct))
+    except Exception as e:  # noqa: BLE001
+        print("记录大模型用量失败：", e, flush=True)
+
+
+TASK_NAMES = {"classify": "分类", "extract": "信息抽取", "ask": "提问", "report": "周报月报", "test": "测试", "other": "其他"}
+
+
+def usage(month: str) -> dict:
+    rows = db.q("SELECT task, SUM(calls) AS calls, SUM(prompt_tokens) AS pt, SUM(completion_tokens) AS ct FROM llm_usage WHERE day LIKE ? GROUP BY task", (month + "%",))
+    days = db.q("SELECT day, SUM(prompt_tokens + completion_tokens) AS t FROM llm_usage WHERE day LIKE ? GROUP BY day ORDER BY day", (month + "%",))
+    total_in = sum(int(r["pt"] or 0) for r in rows)
+    total_out = sum(int(r["ct"] or 0) for r in rows)
+    b = {r["k"]: r["v"] for r in db.q("SELECT k, v FROM setting WHERE k IN ('budget_tokens', 'price_in', 'price_out')")}
+    def num(k):
+        try:
+            return float(b.get(k) or 0)
+        except ValueError:
+            return 0.0
+    budget, pin, pout = num("budget_tokens"), num("price_in"), num("price_out")
+    cost = (total_in * pin + total_out * pout) / 1_000_000 if (pin or pout) else None
+    return {"month": month, "by_task": [{"task": TASK_NAMES.get(r["task"], r["task"]), "calls": int(r["calls"] or 0), "in": int(r["pt"] or 0), "out": int(r["ct"] or 0)} for r in rows],
+            "days": [{"day": d["day"], "tokens": int(d["t"] or 0)} for d in days], "total_in": total_in, "total_out": total_out,
+            "budget_tokens": budget, "price_in": pin, "price_out": pout, "cost": cost,
+            "over": bool(budget and total_in + total_out > budget), "near": bool(budget and total_in + total_out > budget * 0.8)}
+
+
+def save_budget(d: dict):
+    with db.tx() as c:
+        for k in ("budget_tokens", "price_in", "price_out"):
+            if k in d:
+                try:
+                    v = str(max(0.0, float(d[k] or 0)))
+                except (TypeError, ValueError):
+                    v = "0"
+                if db.IS_PG:
+                    c.execute("INSERT INTO setting (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v", (k, v))
+                else:
+                    c.execute("INSERT OR REPLACE INTO setting (k, v) VALUES (?, ?)", (k, v))
 
 
 def parse_json(text: str) -> dict:
@@ -112,7 +168,7 @@ def classify(title: str, creator: str, keywords: str, summary: str, rule_guess: 
     content = (f"标题：{title}\n创建人：{creator}\n关键词：{keywords or '无'}\n"
                f"规则初判：{'、'.join(rule_guess) or '无'}\n\n摘要：\n{(summary or '')[:3500]}")
     text = chat([{"role": "system", "content": CLASSIFY_PROMPT}, {"role": "user", "content": content}],
-                model=s["llm_model_classify"] or None, max_tokens=300, timeout=90)
+                model=s["llm_model_classify"] or None, max_tokens=300, timeout=90, task="classify")
     d = parse_json(text)
     folders = [f for f in d.get("folders") or [] if f in ALLOWED]
     try:
@@ -125,5 +181,5 @@ def classify(title: str, creator: str, keywords: str, summary: str, rule_guess: 
 
 def test() -> dict:
     t = time.time()
-    out = chat([{"role": "user", "content": "只回复两个字：收到"}], max_tokens=10, timeout=30)
+    out = chat([{"role": "user", "content": "只回复两个字：收到"}], max_tokens=10, timeout=30, task="test")
     return {"ok": True, "reply": out.strip()[:50], "seconds": round(time.time() - t, 1)}

@@ -41,7 +41,7 @@ def understand(question: str, history: list[dict]) -> dict:
     msg = (f"对话历史：\n{hist}\n\n" if hist else "") + f"问题：{question}"
     try:
         d = llm.parse_json(llm.chat([{"role": "system", "content": UNDERSTAND.replace("{today}", today.isoformat()).replace("{weekday}", "星期" + wd)},
-                                     {"role": "user", "content": msg}], max_tokens=300, timeout=60))
+                                     {"role": "user", "content": msg}], max_tokens=300, timeout=60, task="ask"))
     except Exception:  # noqa: BLE001 —— 理解失败就按原话检索
         d = {}
     kws = [str(k).strip() for k in d.get("keywords") or [] if str(k).strip()][:8]
@@ -71,14 +71,17 @@ def _scope_sql(u: dict, folder: str, q: dict) -> tuple[str, list]:
 def _keyword_hits(w: str, args: list, kws: list[str]) -> dict[int, float]:
     if not kws:
         return {}
-    like = " OR ".join("c.text LIKE ?" for _ in kws)
+    from . import synonyms
+    groups = [synonyms.expand(k) for k in kws]          # 每个词连同它的同义写法（语音识别错写）一起找
+    forms = [f for g in groups for f in g][:40]
+    like = " OR ".join("c.text LIKE ?" for _ in forms)
     rows = db.q(f"SELECT c.id, c.kind, c.text FROM chunk c JOIN meeting m ON m.id = c.meeting_id WHERE {w} AND ({like}) LIMIT 1500",
-                (*args, *[f"%{k}%" for k in kws]))
+                (*args, *[f"%{k}%" for k in forms]))
     sc = {}
     for r in rows:
         s = 0.0
-        for k in kws:
-            n = r["text"].count(k)
+        for g in groups:
+            n = sum(r["text"].count(f) for f in g)
             if n:
                 s += 1 + min(n, 5) * 0.3        # 命中的词越多越靠前；同一个词多次出现加分有上限
         if r["kind"] == "summary":
@@ -160,7 +163,7 @@ def ask(u: dict, question: str, folder: str = "", history: list[dict] | None = N
         hist = [m for h in (history or [])[-2:] for m in ({"role": "user", "content": h.get("q", "")[:300]}, {"role": "assistant", "content": h.get("a", "")[:600]})]
         answer = llm.chat([{"role": "system", "content": ANSWER}, *hist,
                            {"role": "user", "content": f"【会议资料】\n{material}\n\n【问题】{q['rewrite'] or question}"}],
-                          max_tokens=1500, timeout=120, temperature=0.2)
+                          max_tokens=1500, timeout=120, temperature=0.2, task="ask")
     used = {int(n) for n in re.findall(r"\[(\d{1,2})\]", answer)}
     # 前端只需要被引用的出处（列举模式全给）；资料原文截短
     shown = [dict(s, text=s["text"][:300], cited=(s["n"] in used)) for s in sources]

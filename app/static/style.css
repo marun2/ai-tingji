@@ -274,3 +274,8 @@ select.role { border: 1px solid var(--line-strong); border-radius: 6px; padding:
 .rise .rb i { display: block; height: 100%; background: linear-gradient(90deg, #f59e0b, #e0453a); }
 .rise .rv { text-align: right; color: var(--text-2); font-size: 12px; }
 @media (max-width: 900px) { .graph-wrap { grid-template-columns: 1fr; } .gside { max-height: 300px; } .cgrid { grid-template-columns: 1fr; } .cockpit .kpis { grid-template-columns: 1fr 1fr; } }
+
+.a-note { margin-top: 12px; font-size: 12px; color: var(--text-3); }
+table.syn input:not([type]) , table.syn input[data-k] { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; box-sizing: border-box; }
+table.syn input[type=checkbox] { width: auto; }
+table.syn tr.pend td { background: #fff8e6; }

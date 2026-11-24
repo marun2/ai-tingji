@@ -315,7 +315,7 @@
         if (!cited.length) cited = t.sources.slice(0, 8);
         const src = cited.length ? `<div class="srcs"><div class="srcs-h">出处 · ${cited.length} 处</div>${cited.map((s) => `<div class="src" data-i="${i}" data-n="${s.n}"><span class="n">${s.n}</span><div><div class="st">${esc(s.title)}</div><div class="sm">${esc(s.date || "日期不详")} · ${s.kind === "summary" ? "摘要" : "原文"}</div><div class="sx">${esc(plain(s.text).slice(0, 120))}…</div></div></div>`).join("")}</div>` : "";
         a = `<div class="a"><div class="md">${answerHtml(t.answer, t.sources)}</div>${src}
-          <div class="a-foot"><span class="muted">${t.seconds} 秒${t.vector ? "" : " · 只用了关键词检索"}${t.range && (t.range[0] || t.range[1]) ? ` · 时间 ${t.range[0] || "…"} ~ ${t.range[1] || "今天"}` : ""}</span>
+          <div class="a-note">回答里的数字和说法来自会议发言，未经核实；重要决定请点出处看原文。</div><div class="a-foot"><span class="muted">${t.seconds} 秒${t.vector ? "" : " · 只用了关键词检索"}${t.range && (t.range[0] || t.range[1]) ? ` · 时间 ${t.range[0] || "…"} ~ ${t.range[1] || "今天"}` : ""}</span>
           <button class="rate ${t.rating === 1 ? "on" : ""}" data-i="${i}" data-r="1" title="有用">👍</button><button class="rate ${t.rating === -1 ? "on" : ""}" data-i="${i}" data-r="-1" title="没用">👎</button></div></div>`;
       }
       return `<div class="turn"><div class="q">${esc(t.q)}</div>${a}</div>`;
@@ -624,10 +624,11 @@
   let pollTimer = null;
   function renderAdmin() {
     clearTimeout(pollTimer);
-    const tabs = [["import", "导入听记"], ["members", "人员权限"], ["model", "模型与检索"], ["asks", "提问记录"], ["audit", "操作记录"]];
-    app.innerHTML = `<div class="admin"><div class="admin-inner"><div class="subnav">${tabs.map(([k, n]) => `<button data-k="${k}" class="${S.adminTab === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="adm"></div></div></div>`;
+    const tabs = [["import", "导入听记"], ["members", "人员权限"], ["model", "模型与检索"], ["synonyms", "同义词"], ["asks", "提问记录"], ["audit", "操作记录"]];
+    api("api/admin/usage").then((u) => { const b = $("#useBanner"); if (b && (u.over || u.near)) { b.hidden = false; b.innerHTML = `大模型用量${u.over ? "已超出" : "快到"}本月额度（${fmtTok(u.total_in + u.total_out)} / ${fmtTok(u.budget_tokens)}），在「模型与检索」里查看。`; } }).catch(() => {});
+    app.innerHTML = `<div class="admin"><div class="admin-inner"><div id="useBanner" class="notice warn" hidden></div><div class="subnav">${tabs.map(([k, n]) => `<button data-k="${k}" class="${S.adminTab === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="adm"></div></div></div>`;
     $$(".subnav button").forEach((b) => b.onclick = () => { S.adminTab = b.dataset.k; renderAdmin(); });
-    ({ import: admImport, members: admMembers, model: admModel, asks: admAsks, audit: admAudit })[S.adminTab]();
+    ({ import: admImport, members: admMembers, model: admModel, synonyms: admSyn, asks: admAsks, audit: admAudit })[S.adminTab]();
   }
 
   async function admImport() {
@@ -721,12 +722,14 @@
       <div class="card"><h3>本地向量模型（检索用）</h3>
       <p class="desc">在服务器上把会议内容转成向量，提问时按意思找相关段落，内容不出服务器。第一次启动会自动下载模型（约 100MB），然后在后台把所有会议过一遍，大约要几十分钟；期间提问照常能用（先只用关键词）。</p>
       <div id="embState" class="muted">加载中…</div></div>
+      <div class="card"><h3>大模型用量</h3><p class="desc">按月统计分类、抽取、提问、写报告消耗的字数（tokens）。设个每月额度，超过 80% 会在这里和管理页顶部提醒。价格填了就能估算花费（按你中转站的价格，每百万 tokens 多少元）。</p>
+      <div id="useBox" class="muted">加载中…</div></div>
       <div class="card"><h3>会议信息抽取</h3>
       <p class="desc">用大模型从每场会的摘要里整理出<b>决议、风险问题、关键数字、客户 / 产品 / 竞品 / 项目 / 区域、话题</b>，周报月报和可视化都靠它。新导入的会议会自动抽；第一次全部抽一遍大约一两个小时，会消耗大模型用量。</p>
       <div id="exState" class="muted" style="margin-bottom:10px">加载中…</div>
       <button class="btn primary" id="exGo">补全抽取</button> <button class="btn" id="exRedo">全部重抽</button></div>
       <div class="card"><h3>子公司的会是否也放进「研发市场销售」</h3>
-      <p class="desc">勾选的子公司，业务会（不含面试、人事、财务类）会同时放进「研发市场销售」，部门负责人能看到。默认是大健康、均瑶云商（和你之前手工整理的一致）。</p>
+      <p class="desc">默认子公司的会都<b>不放</b>进「研发市场销售」（部门负责人看不到）。以后如果想让某个子公司的业务会也给负责人看，在这里勾上，再点“开始重新分类”。</p>
       <div class="checks">${r.subs.map((s) => `<label><input type="checkbox" name="bs" value="${s}" ${r.biz_subs.includes(s) ? "checked" : ""}>${s}</label>`).join("")}</div>
       <button class="btn primary" id="bsSave">保存</button></div>
       <div class="card"><h3>重新分类</h3>
@@ -754,11 +757,46 @@
     if (r.reclassify && r.reclassify.running) pollRc();
     pollEmb();
     pollEx();
+    loadUsage();
     const exGo = async (redo) => {
       if (redo && !(await ask("全部重抽", "会把所有会议重新抽一遍，覆盖原来的结果，耗时较长、会消耗大模型用量。", "开始"))) return;
       try { const x = await api("api/admin/extract", { method: "POST", json: { redo } }); toast(`开始抽取 ${x.total} 场`); pollEx(); } catch (e) { toast(e.message, true); }
     };
     $("#exGo").onclick = () => exGo(false); $("#exRedo").onclick = () => exGo(true);
+  }
+  const fmtTok = (n) => n >= 1e8 ? (n / 1e8).toFixed(2) + " 亿" : n >= 1e4 ? (n / 1e4).toFixed(1) + " 万" : String(n);
+  async function loadUsage() {
+    const el = $("#useBox"); if (!el) return;
+    let u; try { u = await api("api/admin/usage"); } catch (e) { el.textContent = e.message; return; }
+    const tot = u.total_in + u.total_out, pct = u.budget_tokens ? Math.min(100, tot / u.budget_tokens * 100) : 0;
+    el.innerHTML = `<div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:10px;color:var(--text)"><div><div class="muted" style="font-size:12px">${u.month} 合计</div><div style="font-size:24px;font-weight:600">${fmtTok(tot)}</div><div class="muted" style="font-size:12px">输入 ${fmtTok(u.total_in)} · 输出 ${fmtTok(u.total_out)}</div></div>
+      ${u.cost != null ? `<div><div class="muted" style="font-size:12px">估算花费</div><div style="font-size:24px;font-weight:600">¥${u.cost.toFixed(2)}</div></div>` : ""}
+      ${u.budget_tokens ? `<div style="flex:1;min-width:200px"><div class="muted" style="font-size:12px">每月额度 ${fmtTok(u.budget_tokens)}${u.over ? ' · <span class="tag bad">已超出</span>' : u.near ? ' · <span class="tag warn">快用完了</span>' : ""}</div><div class="progress" style="height:8px"><div style="width:${pct}%;${u.over ? "background:var(--bad)" : ""}"></div></div></div>` : ""}</div>
+      <table class="grid" style="margin-bottom:12px"><tr><th>用途</th><th>次数</th><th>输入</th><th>输出</th></tr>${u.by_task.map((t) => `<tr><td>${esc(t.task)}</td><td>${t.calls}</td><td>${fmtTok(t.in)}</td><td>${fmtTok(t.out)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">本月还没有用量</td></tr>'}</table>
+      <div class="form-row"><label>每月额度（万 tokens）</label><input id="ubud" type="number" min="0" value="${u.budget_tokens ? u.budget_tokens / 1e4 : ""}" placeholder="不填 = 不提醒"></div>
+      <div class="form-row"><label>输入价格（元/百万）</label><input id="upin" type="number" min="0" step="0.01" value="${u.price_in || ""}" placeholder="选填"></div>
+      <div class="form-row"><label>输出价格（元/百万）</label><input id="upout" type="number" min="0" step="0.01" value="${u.price_out || ""}" placeholder="选填"></div>
+      <div class="form-row"><label></label><div><button class="btn primary" id="usave">保存</button></div></div>`;
+    $("#usave").onclick = async () => {
+      try { await api("api/admin/usage", { method: "PUT", json: { budget_tokens: (+$("#ubud").value || 0) * 1e4, price_in: +$("#upin").value || 0, price_out: +$("#upout").value || 0 } }); toast("已保存"); loadUsage(); }
+      catch (e) { toast(e.message, true); }
+    };
+  }
+  async function admSyn() {
+    const el = $("#adm");
+    let r; try { r = await api("api/admin/synonyms"); } catch (e) { el.textContent = e.message; return; }
+    const rows = r.items.map((x) => ({ ...x }));
+    const draw = () => {
+      el.innerHTML = `<div class="card"><h3>同义词表</h3><p class="desc">语音识别经常把专有名词听错，比如“均瑶健康”听成“君瑶健康”、“盒马”听成“河马”。在这里登记以后，<b>搜索和提问时任何一种写法都能找到</b>，图谱和报告里也会统一成标准写法。<br>初始表是从你现有的会议文字里统计出来的；黄色那行拿不准，请你确认。</p>
+        <table class="grid syn"><tr><th style="width:150px">标准写法</th><th>其他写法（逗号分隔）</th><th style="width:240px">备注</th><th style="width:60px">启用</th><th style="width:40px"></th></tr>
+        ${rows.map((x, i) => `<tr class="${/不确定/.test(x.note || "") ? "pend" : ""}"><td><input data-i="${i}" data-k="canonical" value="${esc(x.canonical)}"></td><td><input data-i="${i}" data-k="variants" value="${esc(x.variants || "")}"></td><td><input data-i="${i}" data-k="note" value="${esc(x.note || "")}"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="enabled" ${x.enabled ? "checked" : ""}></td><td><button class="btn sm" data-del="${i}" title="删除">×</button></td></tr>`).join("")}</table>
+        <div style="margin-top:12px;display:flex;gap:8px"><button class="btn" id="synAdd">+ 加一行</button><button class="btn primary" id="synSave">保存</button></div></div>`;
+      $$(".syn input").forEach((inp) => inp.oninput = inp.onchange = () => { const x = rows[+inp.dataset.i]; x[inp.dataset.k] = inp.type === "checkbox" ? inp.checked : inp.value; });
+      $$("[data-del]").forEach((b) => b.onclick = () => { rows.splice(+b.dataset.del, 1); draw(); });
+      $("#synAdd").onclick = () => { rows.push({ canonical: "", variants: "", note: "", enabled: 1 }); draw(); };
+      $("#synSave").onclick = async () => { try { await api("api/admin/synonyms", { method: "PUT", json: { items: rows } }); toast("已保存，搜索和提问马上生效"); admSyn(); } catch (e) { toast(e.message, true); } };
+    };
+    draw();
   }
   let exTimer = null;
   async function pollEx() {

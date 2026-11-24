@@ -372,6 +372,7 @@ def _do_history(batch_id: int, path: str) -> dict:
     if not isinstance(data, dict) or data.get("kind") != "tingji-history":
         raise ValueError("这不是历史听记包（应由 scripts/history_pack.py 生成）")
     items = data.get("items") or []
+    subs = biz_subs()
     new_ids: list[int] = []
     st = collections.Counter()
     st["rows"] = len(items)
@@ -401,6 +402,8 @@ def _do_history(batch_id: int, path: str) -> dict:
         empty = len(summary) < 30 and len(tr) < 200
         r = rules.classify(entity if entity != "上海食品" else "均瑶集团上海食品有限公司", title, "", summary)
         folders = [f for f in it.get("folders") or [] if f in rules.FOLDERS]
+        if entity in rules.SUBS and entity not in subs:      # 子公司的会不进研发市场销售（用户决定）
+            folders = [f for f in folders if f != rules.BIZ] or [entity]
         sensitive = bool(r.get("sensitive"))
         if sensitive and rules.BIZ in folders:
             folders = [f for f in folders if f != rules.BIZ] or ["人事"]

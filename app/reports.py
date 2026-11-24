@@ -135,7 +135,7 @@ def generate(kind: str, scope: str, start: str, end: str, by: str) -> dict:
             head += f"\n注意：有 {st['meetings'] - st['extracted']} 场会还没抽取信息，下面资料不含它们。"
         content = llm.chat([{"role": "system", "content": PROMPT.replace("{kind_name}", kind_name).replace("{extra}", extra)},
                             {"role": "user", "content": f"{head}\n\n【会议资料】\n{material or '（这些会议还没有抽取出信息）'}"}],
-                           max_tokens=3000, timeout=240, temperature=0.3)
+                           max_tokens=3000, timeout=240, temperature=0.3, task="report")
     with db.tx() as c:
         c.execute("DELETE FROM report WHERE kind = ? AND scope = ? AND period_start = ?", (kind, scope, start))
         rid = db.insert(c, "report", {"kind": kind, "scope": scope, "period_start": start, "period_end": end, "title": title,

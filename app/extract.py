@@ -30,9 +30,11 @@ PROMPT = """你在整理均瑶健康（食品饮料公司）的会议记录。�
 
 
 def _norm(name: str) -> str:
+    from . import synonyms
     n = re.sub(r"[\s“”\"'《》【】()（）]", "", str(name or ""))
+    n = synonyms.canonical(n)
     n = re.sub(r"(有限公司|公司|集团|超市|鲜生|品牌)$", "", n)
-    return n[:30]
+    return synonyms.canonical(n)[:30]
 
 
 def extract_one(m: dict) -> dict:
@@ -43,7 +45,7 @@ def extract_one(m: dict) -> dict:
         content += f"\n\n原文节选：\n{m['transcript'][:3000]}"
     s = llm.settings()
     text = llm.chat([{"role": "system", "content": PROMPT}, {"role": "user", "content": content}],
-                    model=s["llm_model_classify"] or None, max_tokens=1500, timeout=120)
+                    model=s["llm_model_classify"] or None, max_tokens=1500, timeout=120, task="extract")
     return llm.parse_json(text)
 
 
@@ -155,6 +157,12 @@ def after_import(mids: list[int]):
 
 
 def reset_running():
+    """服务重启时：上次没抽完的，自动接着抽（只抽还没抽过的）"""
     st = state()
     if st.get("running"):
-        _set({**{k: v for k, v in st.items() if k not in ("all", "extracted")}, "running": False, "error": "服务重启，抽取中断；点“补全抽取”继续"})
+        _set({**{k: v for k, v in st.items() if k not in ("all", "extracted")}, "running": False})
+        if llm.configured():
+            try:
+                start("服务重启后继续")
+            except RuntimeError:
+                pass

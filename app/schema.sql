@@ -128,3 +128,22 @@ CREATE TABLE IF NOT EXISTS report (
   created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS ix_report ON report(kind, scope, period_start);
+
+-- 同义词：语音识别错写（如 君瑶健康 → 均瑶健康），搜索和提问时当成一回事
+CREATE TABLE IF NOT EXISTS synonym (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  canonical TEXT NOT NULL,         -- 标准写法
+  variants TEXT,                   -- 其他写法，逗号分隔
+  note TEXT,
+  enabled INTEGER DEFAULT 1
+);
+
+-- 大模型用量（按天、按用途）
+CREATE TABLE IF NOT EXISTS llm_usage (
+  day TEXT NOT NULL,
+  task TEXT NOT NULL,              -- classify 分类 / extract 抽取 / ask 提问 / report 报告 / test 测试
+  calls INTEGER DEFAULT 0,
+  prompt_tokens INTEGER DEFAULT 0,
+  completion_tokens INTEGER DEFAULT 0,
+  PRIMARY KEY (day, task)
+);

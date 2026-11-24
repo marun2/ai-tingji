@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from urllib.parse import quote
 
-from . import access, chunks, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules
+from . import access, chunks, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -219,9 +219,11 @@ def _search(u, qtext, folder):
         return {"items": [], "total": 0}
     cond, params = access.meeting_filter(u)
     where, args = [cond], list(params)
-    for t in terms:
-        where.append("(m.title LIKE ? OR m.keywords LIKE ? OR m.summary LIKE ? OR m.transcript LIKE ? OR m.creator LIKE ?)")
-        args += [f"%{t}%"] * 5
+    groups = [synonyms.expand(t) for t in terms]     # 同义写法（语音识别错写）一起搜
+    for g in groups:
+        where.append("(" + " OR ".join("(m.title LIKE ? OR m.keywords LIKE ? OR m.summary LIKE ? OR m.transcript LIKE ? OR m.creator LIKE ?)" for _ in g) + ")")
+        for t in g:
+            args += [f"%{t}%"] * 5
     if folder:
         if folder not in access.folders_for(u):
             raise HTTPException(403, "没有这个文件夹的权限")
@@ -229,15 +231,16 @@ def _search(u, qtext, folder):
         args.append(folder)
     w = " AND ".join(where)
     rows = db.q(f"SELECT {LIST_COLS}, m.summary, m.transcript FROM meeting m WHERE {w} ORDER BY m.start_time DESC LIMIT 100", args)
+    terms = [f for g in groups for f in g]
     for r in rows:
-        hit_title = all(t in r["title"] for t in terms)
+        hit_title = all(any(f in r["title"] for f in g) for g in groups)
         r["snippet"] = _snippet(r["summary"] or "", terms) or _snippet(r["transcript"] or "", terms)
         r["where"] = "标题" if hit_title else ("摘要" if _snippet(r["summary"] or "", terms) else "原文")
         r["score"] = (3 if hit_title else 0) + sum((r["summary"] or "").count(t) for t in terms) + 0.2 * sum((r["transcript"] or "").count(t) for t in terms)
         r.pop("summary")
         r.pop("transcript")
     rows.sort(key=lambda r: (-r["score"], r["start_time"]), reverse=False)
-    return {"items": _attach_folders(rows[:60]), "total": len(rows), "terms": terms}
+    return {"items": _attach_folders(rows[:60]), "total": len(rows), "terms": terms[:20]}
 
 
 async def search(req):
@@ -550,6 +553,50 @@ async def ins_cockpit(req):
     return ok(await run(insights.cockpit, u))
 
 
+# ---------------------------------------------------------------- 同义词、用量
+async def syn_get(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    return ok({"items": await run(synonyms.list_all)})
+
+
+async def syn_put(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    rows = (await body(req)).get("items") or []
+    await run(synonyms.save_all, rows)
+    audit(u, "修改同义词表", f"{len(rows)} 组")
+    return ok({"items": await run(synonyms.list_all)})
+
+
+async def usage_get(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    month = req.query_params.get("month") or __import__("time").strftime("%Y-%m")
+    return ok(await run(llm.usage, month[:7]))
+
+
+async def usage_put(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    await run(llm.save_budget, await body(req))
+    audit(u, "修改用量提醒", "")
+    return ok(await run(llm.usage, __import__("time").strftime("%Y-%m")))
+
+
+def _migrate_subs_out_of_biz():
+    """用户 2026-11-24 决定：子公司的会不放进「研发市场销售」。一次性把已有的都拿出来（以后的导入也不会再放）"""
+    if db.q1("SELECT 1 FROM setting WHERE k = 'mig_subs_biz_v1'"):
+        return
+    with db.tx() as c:
+        ph = ",".join("?" for _ in rules.SUBS)
+        n = c.execute(f"DELETE FROM meeting_folder WHERE folder = ? AND meeting_id IN (SELECT id FROM meeting WHERE entity IN ({ph}))",
+                      (rules.BIZ, *rules.SUBS)).rowcount
+        c.execute("INSERT INTO setting (k, v) VALUES ('mig_subs_biz_v1', ?)", (str(n),))
+        c.execute("INSERT INTO setting (k, v) VALUES ('biz_subs', '[]')" if not db.q1("SELECT 1 FROM setting WHERE k = 'biz_subs'") else "UPDATE setting SET v = '[]' WHERE k = 'biz_subs'")
+    print(f"子公司的会移出研发市场销售：{n} 条", flush=True)
+
+
 # ---------------------------------------------------------------- 页面
 async def index(_):
     html = (BASE / "static" / "index.html").read_text(encoding="utf-8")
@@ -572,6 +619,8 @@ async def lifespan(_app):
     st = ingest.reclassify_state()
     if st.get("running"):
         ingest._set_state({**st, "running": False, "error": "服务重启，分类中断，请重新点“重新分类”"})
+    synonyms.seed()
+    _migrate_subs_out_of_biz()
     try:
         n = chunks.backfill()
         if n:
@@ -616,6 +665,10 @@ routes = [
     Route("/api/reports", reports_list),
     Route("/api/reports/generate", report_generate, methods=["POST"]),
     Route("/api/reports/{id:int}", report_get),
+    Route("/api/admin/synonyms", syn_get),
+    Route("/api/admin/synonyms", syn_put, methods=["PUT"]),
+    Route("/api/admin/usage", usage_get),
+    Route("/api/admin/usage", usage_put, methods=["PUT"]),
     Route("/api/admin/extract", extract_state),
     Route("/api/admin/extract", extract_start, methods=["POST"]),
     Route("/api/admin/embed/retry", embed_retry, methods=["POST"]),

@@ -94,7 +94,7 @@ def main():
     r, f = folders("醒力罐")
     check(f == {"每日博士"}, "每日博士的会只在每日博士")
     r, f = folders("益生菌品类")
-    check(f == {"均瑶云商", rules.BIZ}, "均瑶云商的业务会同时进研发市场销售")
+    check(f == {"均瑶云商"}, "子公司的会不进研发市场销售（用户决定）")
 
     print("再导一次同一个文件")
     with db.tx() as c:
@@ -226,6 +226,20 @@ def main():
     check((s, e) == ("2026-11-16", "2026-11-22"), "周报周期：上周一到上周日")
     s, e = reports.period("month", __import__("datetime").date(2026, 12, 1))
     check((s, e) == ("2026-11-01", "2026-11-30"), "月报周期：上个月")
+
+    print("同义词 / 用量")
+    from app import synonyms, llm as _llm
+    synonyms.seed()
+    check("河马" in synonyms.expand("盒马") and synonyms.canonical("胃动力") == "味动力", "同义词表：盒马/河马、味动力/胃动力 当成一回事")
+    import app.main as _m
+    with db.tx() as c:
+        c.execute("UPDATE meeting SET summary = summary || ' 河马渠道' WHERE id = ?", (m_biz,))
+    r = _m._search(board, "盒马", "")
+    check(any(x["id"] == m_biz for x in r["items"]), "搜“盒马”能找到写成“河马”的会")
+    _llm._record("ask", {"prompt_tokens": 1000, "completion_tokens": 200}, [], {"choices": [{"message": {"content": ""}}]})
+    _llm.save_budget({"budget_tokens": 1000})
+    us = _llm.usage(__import__("time").strftime("%Y-%m"))
+    check(us["total_in"] >= 1000 and us["over"], "大模型用量按月统计，超出额度会提醒")
 
     print("钉钉图文纪要 JSON 摘要")
     md = ingest.clean('{"meta_info":{"title":"标题A","subtitle":"副标题"},"overview":"总述","menu":[{"slice_id":"s1","title":"议题一","summary":"议题摘要"}],'
