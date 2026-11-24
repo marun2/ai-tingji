@@ -162,7 +162,9 @@ def init():
 
 # 后来加的字段：老库里补上（CREATE TABLE IF NOT EXISTS 不会给已有的表加列）
 # 格式：(表, 列, SQLite 类型, PostgreSQL 类型)
-ADDED_COLUMNS: list[tuple[str, str, str, str]] = []
+ADDED_COLUMNS: list[tuple[str, str, str, str]] = [
+    ("meeting", "extracted_at", "TEXT", "TEXT"),        # 抽取完成时间（空 = 还没抽）
+]
 
 
 def _migrate():

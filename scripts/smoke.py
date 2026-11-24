@@ -193,6 +193,40 @@ def main():
     names = _zf.ZipFile(__import__("io").BytesIO(data)).namelist() if name.endswith(".zip") else [name]
     check(not any("面试" in x for x in names), "部门负责人导出的研发市场销售里没有面试")
 
+    print("抽取 / 报告 / 可视化（不调大模型，直接写入抽取结果）")
+    from app import extract, insights, reports
+    m_int = db.q1("SELECT id FROM meeting WHERE title LIKE ?", ("%拼多多运营%",))["id"]
+    extract._save(m_biz, {"decisions": ["12月15日前完成85%回款"], "risks": ["长沙断货"], "metrics": [{"name": "回款", "value": "85", "unit": "%", "context": "12月15日前"}],
+                          "entities": {"客户": ["盒马鲜生", "叮咚"], "竞品": ["李子园"], "区域": ["豫鲁三区"]}, "topics": ["春节备货"]})
+    extract._save(m_int, {"decisions": [], "risks": ["候选人期望薪资高"], "metrics": [], "entities": {"客户": ["拼多多"]}, "topics": ["招聘"]})
+    check(db.q1("SELECT text FROM fact WHERE meeting_id = ? AND kind = 'entity' AND label = '客户' ORDER BY id LIMIT 1", (m_biz,))["text"] == "盒马",
+          "抽取结果入库，名称统一（盒马鲜生 → 盒马）")
+    st = extract.state()
+    check(st["extracted"] >= 2, "抽取进度可查")
+    g_lead = insights.graph(lead, days=730)
+    names = {n["name"] for n in g_lead["nodes"]}
+    check("盒马" in names and "招聘" not in names and "拼多多" not in names, "部门负责人的知识图谱里没有面试会里的内容")
+    g_board = insights.graph(board, days=730)
+    check("招聘" in {n["name"] for n in g_board["nodes"]}, "董事局的知识图谱包含全部")
+    check(isinstance(insights.collab(board, days=730)["folders"], list) and isinstance(insights.river(board)["series"], list), "部门协作、话题河流能出数据")
+    ck = insights.cockpit(lead)
+    check(all("拼多多" not in (r["title"] or "") for r in ck["risks"]), "部门负责人的驾驶舱看不到面试里的风险")
+    data = reports.collect("biz", "2026-11-01", "2026-11-30")
+    check(all("面试" not in m["title"] for m in data["meetings"]) and data["stats"]["meetings"] >= 1, "研发市场销售版报告不含面试")
+    with db.tx() as c:
+        rid = db.insert(c, "report", {"kind": "week", "scope": "all", "period_start": "2026-11-16", "period_end": "2026-11-22", "title": "t",
+                                      "content": f"测试 [M{m_int}]", "stats": "{}", "created_by": "smoke", "created_at": access.now()})
+    try:
+        reports.get_report(lead, rid)
+        check(False, "部门负责人看不到全公司版报告")
+    except PermissionError:
+        check(True, "部门负责人看不到全公司版报告")
+    check(str(m_int) in {str(k) for k in reports.get_report(board, rid)["refs"]}, "报告里的会议出处能打开")
+    s, e = reports.period("week", __import__("datetime").date(2026, 11, 24))
+    check((s, e) == ("2026-11-16", "2026-11-22"), "周报周期：上周一到上周日")
+    s, e = reports.period("month", __import__("datetime").date(2026, 12, 1))
+    check((s, e) == ("2026-11-01", "2026-11-30"), "月报周期：上个月")
+
     print("钉钉图文纪要 JSON 摘要")
     md = ingest.clean('{"meta_info":{"title":"标题A","subtitle":"副标题"},"overview":"总述","menu":[{"slice_id":"s1","title":"议题一","summary":"议题摘要"}],'
                       '"details":[{"slice_id":"s1","detail_json":{"blocks":[{"type":"callout","content":["要点1"]},{"type":"module","title":"模块","children":[{"type":"content-list","items":[{"title":"小标题","content":["内容"]}]}]}]}}]}')

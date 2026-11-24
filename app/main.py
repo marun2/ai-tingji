@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from urllib.parse import quote
 
-from . import access, chunks, db, embed, exporter, ingest, llm, qa, rules
+from . import access, chunks, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -458,6 +458,98 @@ async def embed_retry(req):
     return ok(embed.state())
 
 
+# ---------------------------------------------------------------- 抽取
+async def extract_state(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    return ok(await run(extract.state))
+
+
+async def extract_start(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    data = await body(req)
+    try:
+        r = await run(extract.start, u["name"], bool(data.get("redo")))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    audit(u, "全部重抽" if data.get("redo") else "补全抽取", f"{r['total']} 场")
+    return ok(r)
+
+
+# ---------------------------------------------------------------- 周报月报
+async def reports_list(req):
+    u = await run(user, req)
+    access.require(u)
+    return ok({"items": await run(reports.list_reports, u), "job": reports.job_state(), "can_generate": u["is_admin"],
+               "scopes": reports.SCOPES})
+
+
+async def report_get(req):
+    u = await run(user, req)
+    try:
+        return ok(await run(reports.get_report, u, int(req.path_params["id"])))
+    except PermissionError as e:
+        raise HTTPException(404, str(e))
+
+
+async def report_generate(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    data = await body(req)
+    kind = "month" if data.get("kind") == "month" else "week"
+    if data.get("which") == "current":   # 本周 / 本月至今
+        today = reports._now().date()
+        start = (today - __import__("datetime").timedelta(days=today.weekday())) if kind == "week" else today.replace(day=1)
+        s, e = start.isoformat(), today.isoformat()
+    else:
+        s, e = reports.period(kind)
+    try:
+        reports.run_async(kind, s, e, u["name"])
+    except RuntimeError as ex:
+        raise HTTPException(409, str(ex))
+    audit(u, "生成报告", f"{kind} {s}~{e}")
+    return ok({"start": s, "end": e})
+
+
+# ---------------------------------------------------------------- 可视化
+def _int(v, default, lo, hi):
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+async def ins_graph(req):
+    u = await run(user, req)
+    p = req.query_params
+    types = [t for t in (p.get("types") or "").split(",") if t] or None
+    return ok(await run(insights.graph, u, _int(p.get("days"), 90, 7, 730), types, _int(p.get("limit"), 90, 20, 200)))
+
+
+async def ins_node(req):
+    u = await run(user, req)
+    p = req.query_params
+    return ok({"items": await run(insights.node_meetings, u, p.get("id") or "", _int(p.get("days"), 90, 7, 730))})
+
+
+async def ins_collab(req):
+    u = await run(user, req)
+    return ok(await run(insights.collab, u, _int(req.query_params.get("days"), 90, 7, 730)))
+
+
+async def ins_river(req):
+    u = await run(user, req)
+    p = req.query_params
+    kind = p.get("kind") if p.get("kind") in insights.TYPES else "话题"
+    return ok(await run(insights.river, u, _int(p.get("weeks"), 16, 4, 52), 8, kind))
+
+
+async def ins_cockpit(req):
+    u = await run(user, req)
+    return ok(await run(insights.cockpit, u))
+
+
 # ---------------------------------------------------------------- 页面
 async def index(_):
     html = (BASE / "static" / "index.html").read_text(encoding="utf-8")
@@ -486,7 +578,9 @@ async def lifespan(_app):
             print(f"补切文本段：{n} 场会议", flush=True)
     except Exception as e:  # noqa: BLE001
         print("补切文本段失败：", e, flush=True)
+    extract.reset_running()
     embed.start()
+    reports.scheduler()
     yield
 
 
@@ -514,6 +608,16 @@ routes = [
     Route("/api/admin/asks", asks),
     Route("/api/export", export_api),
     Route("/api/admin/embed", embed_state),
+    Route("/api/insights/graph", ins_graph),
+    Route("/api/insights/node", ins_node),
+    Route("/api/insights/collab", ins_collab),
+    Route("/api/insights/river", ins_river),
+    Route("/api/insights/cockpit", ins_cockpit),
+    Route("/api/reports", reports_list),
+    Route("/api/reports/generate", report_generate, methods=["POST"]),
+    Route("/api/reports/{id:int}", report_get),
+    Route("/api/admin/extract", extract_state),
+    Route("/api/admin/extract", extract_start, methods=["POST"]),
     Route("/api/admin/embed/retry", embed_retry, methods=["POST"]),
     Route("/", index),
     Mount("/static", StaticFiles(directory=BASE / "static"), name="static"),

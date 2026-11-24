@@ -100,3 +100,31 @@ CREATE TABLE IF NOT EXISTS ask_log (
   seconds DOUBLE PRECISION,
   created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
+
+-- 从会议里抽出来的信息：决议 / 风险 / 数字 / 客户产品等实体 / 话题（大模型抽取，周报月报和可视化用）
+CREATE TABLE IF NOT EXISTS fact (
+  id SERIAL PRIMARY KEY,
+  meeting_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,              -- decision 决议 / risk 风险问题 / metric 数字 / entity 实体 / topic 话题
+  label TEXT,                      -- 实体类别（客户/产品/竞品/项目/区域）或数字的指标名
+  text TEXT,                       -- 内容（实体名、话题名、决议原句…）
+  value TEXT,                      -- 数字的值
+  unit TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_fact_meeting ON fact(meeting_id);
+CREATE INDEX IF NOT EXISTS ix_fact_kind ON fact(kind, label);
+
+-- 周报 / 月报
+CREATE TABLE IF NOT EXISTS report (
+  id SERIAL PRIMARY KEY,
+  kind TEXT NOT NULL,              -- week / month
+  scope TEXT NOT NULL,             -- all 全公司版（董事局、管理员）/ biz 研发市场销售版（部门负责人）
+  period_start TEXT,
+  period_end TEXT,
+  title TEXT,
+  content TEXT,                    -- Markdown
+  stats TEXT,                      -- JSON：会议数、各文件夹数量、热门话题等（页面上画图用）
+  created_by TEXT,
+  created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+);
+CREATE INDEX IF NOT EXISTS ix_report ON report(kind, scope, period_start);

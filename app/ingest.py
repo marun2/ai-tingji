@@ -346,6 +346,8 @@ def _do_import(batch_id: int, path: str) -> dict:
     from . import chunks, embed
     chunks.rebuild(touched)
     embed.kick()
+    from . import extract
+    extract.after_import(touched)
     out = dict(st)
     out["skipped_orgs"] = dict(skipped_orgs)
     out["llm"] = use_llm
@@ -427,6 +429,8 @@ def _do_history(batch_id: int, path: str) -> dict:
     from . import chunks, embed
     chunks.rebuild(new_ids)
     embed.kick()
+    from . import extract
+    extract.after_import(new_ids)
     out = dict(st)
     out["history"] = True
     return out
