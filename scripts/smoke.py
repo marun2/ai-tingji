@@ -12,6 +12,7 @@ TMP = tempfile.mkdtemp(prefix="tingji-smoke-")
 os.environ["DATA_DIR"] = TMP
 os.environ.pop("DATABASE_URL", None)
 os.environ.pop("ZT_APP", None)
+os.environ["EMBED"] = "off"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import openpyxl  # noqa: E402
@@ -136,6 +137,61 @@ def main():
     check(f == {rules.BIZ, "财务"}, "历史文件夹归属原样保留")
     r, f = folders("拼多多运营")
     check(r["sensitive"] == 1 and rules.BIZ not in f, "历史里的面试也不会进研发市场销售")
+
+    print("检索：文本段 + 向量（用假模型代替真模型，只测流程）")
+    import numpy as np
+    from app import chunks, embed, exporter, qa
+    n_chunks = db.q1("SELECT COUNT(*) AS n FROM chunk")["n"]
+    check(n_chunks > 0, f"导入后自动切成检索文本段（{n_chunks} 段）")
+
+    class FakeTok:
+        def encode(self, t, max_len=512):
+            return [101] + [ord(c) % 5000 for c in t[: max_len - 2]] + [102]
+
+    class FakeSession:
+        class _I:
+            def __init__(self, n): self.name = n
+        def get_inputs(self): return [self._I("input_ids"), self._I("attention_mask"), self._I("token_type_ids")]
+        def run(self, _o, feeds):
+            ids = feeds["input_ids"]
+            out = np.zeros((ids.shape[0], ids.shape[1], embed.DIM), dtype=np.float32)
+            for i, row in enumerate(ids):
+                for t in row:
+                    if t:
+                        out[i, 0, int(t) % embed.DIM] += 1.0   # 字袋：用字相近的文本向量也相近
+            return [out]
+
+    embed._session, embed._tok = FakeSession(), FakeTok()
+    rows = db.q("SELECT id, meeting_id, text FROM chunk ORDER BY id")
+    v = embed.embed([r["text"] for r in rows]).astype(np.float16)
+    embed._ids = np.array([r["id"] for r in rows], dtype=np.int64)
+    embed._mids = np.array([r["meeting_id"] for r in rows], dtype=np.int64)
+    embed._vecs = v
+    m_biz = db.q1("SELECT id FROM meeting WHERE title LIKE ?", ("%豫鲁三区%",))["id"]
+    hits = embed.search(embed.embed(["豫鲁三区生意回顾 CNY 货盘"], query=True)[0], {m_biz}, top=5)
+    check(hits and all(db.q1("SELECT meeting_id FROM chunk WHERE id = ?", (c,))["meeting_id"] == m_biz for c, _ in hits), "向量检索只在允许的会议里找")
+    q = {"mode": "detail", "keywords": ["面试", "候选人"], "date_from": "", "date_to": "", "rewrite": "面试情况"}
+    got = qa.retrieve(lead, "面试情况", "", q)
+    check(all("面试" not in r["title"] for r in got), "部门负责人提问时检索不到面试内容")
+    got = qa.retrieve(board, "面试情况", "", q)
+    check(any("面试" in r["title"] for r in got), "董事局提问时能检索到面试内容")
+    embed.forget_meetings([m_biz])
+    check(m_biz not in set(embed._mids.tolist()), "会议内容更新后旧向量被清掉（后台会重新生成）")
+
+    print("导出 Word")
+    name, data, n = exporter.export(board, ids=[m_biz])
+    check(name.endswith(".docx") and n == 1 and data[:2] == b"PK", "单场会导出 Word")
+    name, data, n = exporter.export(board, folder=rules.BIZ)
+    check(name.endswith(".zip") and n >= 2, f"整个文件夹导出 zip（{n} 场）")
+    try:
+        exporter.export(lead, folder="人事")
+        check(False, "部门负责人不能导出人事")
+    except PermissionError:
+        check(True, "部门负责人不能导出人事")
+    name, data, n = exporter.export(lead, folder=rules.BIZ)
+    import zipfile as _zf
+    names = _zf.ZipFile(__import__("io").BytesIO(data)).namelist() if name.endswith(".zip") else [name]
+    check(not any("面试" in x for x in names), "部门负责人导出的研发市场销售里没有面试")
 
     print("钉钉图文纪要 JSON 摘要")
     md = ingest.clean('{"meta_info":{"title":"标题A","subtitle":"副标题"},"overview":"总述","menu":[{"slice_id":"s1","title":"议题一","summary":"议题摘要"}],'

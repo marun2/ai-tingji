@@ -342,6 +342,10 @@ def _do_import(batch_id: int, path: str) -> dict:
             _progress(batch_id, "写入", gi + 1, total)
 
     st.update(_classify_ids(touched, use_llm, subs, lambda d, t: _progress(batch_id, "分类" + ("（大模型）" if use_llm else ""), d, t)))
+    _progress(batch_id, "切分文本（用于检索）", 0, len(touched))
+    from . import chunks, embed
+    chunks.rebuild(touched)
+    embed.kick()
     out = dict(st)
     out["skipped_orgs"] = dict(skipped_orgs)
     out["llm"] = use_llm
@@ -359,6 +363,7 @@ def _do_history(batch_id: int, path: str) -> dict:
     if not isinstance(data, dict) or data.get("kind") != "tingji-history":
         raise ValueError("这不是历史听记包（应由 scripts/history_pack.py 生成）")
     items = data.get("items") or []
+    new_ids: list[int] = []
     st = collections.Counter()
     st["rows"] = len(items)
     existing = {x["link_id"] for x in db.q("SELECT link_id FROM meeting_link")}
@@ -402,6 +407,8 @@ def _do_history(batch_id: int, path: str) -> dict:
             if not empty:
                 c.executemany("INSERT INTO meeting_folder (meeting_id, folder) VALUES (?, ?)", [(mid, f) for f in dict.fromkeys(folders)])
         existing.add(hid)
+        if not empty:
+            new_ids.append(mid)
         st["empty" if empty else "new"] += 1
         if truncated:
             st["truncated"] += 1
@@ -409,6 +416,10 @@ def _do_history(batch_id: int, path: str) -> dict:
             st["no_date"] += 1
         if i % 50 == 0:
             _progress(batch_id, "写入历史会议", i + 1, total)
+    _progress(batch_id, "切分文本（用于检索）", 0, len(new_ids))
+    from . import chunks, embed
+    chunks.rebuild(new_ids)
+    embed.kick()
     out = dict(st)
     out["history"] = True
     return out

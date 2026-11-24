@@ -19,7 +19,9 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import access, db, ingest, llm, rules
+from urllib.parse import quote
+
+from . import access, chunks, db, embed, exporter, ingest, llm, qa, rules
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -380,6 +382,79 @@ async def audit_log(req):
     return ok({"items": await run(db.q, "SELECT * FROM audit ORDER BY id DESC LIMIT 200")})
 
 
+# ---------------------------------------------------------------- 提问
+def _ask(u, data):
+    n = db.q1("SELECT COUNT(*) AS n FROM ask_log WHERE user_id = ? AND created_at >= ?",
+              (u["id"], (__import__("datetime").datetime.now() - __import__("datetime").timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")))["n"]
+    if n >= 60:
+        raise HTTPException(429, "提问太频繁了，一小时最多 60 个问题")
+    try:
+        return qa.ask(u, str(data.get("question") or ""), str(data.get("folder") or ""), data.get("history") or [])
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except (ValueError, llm.LLMError) as e:
+        raise HTTPException(400, str(e))
+
+
+async def ask_api(req):
+    u = await run(user, req)
+    return ok(await run(_ask, u, await body(req)))
+
+
+async def ask_rate(req):
+    u = await run(user, req)
+    data = await body(req)
+    try:
+        await run(qa.rate, u, int(req.path_params["id"]), int(data.get("rating") or 0), str(data.get("comment") or ""))
+    except PermissionError as e:
+        raise HTTPException(404, str(e))
+    return ok({"ok": True})
+
+
+def _asks(u, only_bad):
+    access.require_admin(u)
+    w = "WHERE rating = -1" if only_bad else ""
+    rows = db.q(f"SELECT id, user_name, scope, question, answer, rating, comment, seconds, created_at FROM ask_log {w} ORDER BY id DESC LIMIT 200")
+    stat = db.q1("SELECT COUNT(*) AS n, SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) AS up, SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END) AS down FROM ask_log")
+    return {"items": rows, "stat": stat}
+
+
+async def asks(req):
+    u = await run(user, req)
+    return ok(await run(_asks, u, req.query_params.get("bad") == "1"))
+
+
+# ---------------------------------------------------------------- 导出 Word
+async def export_api(req):
+    u = await run(user, req)
+    p = req.query_params
+    ids = [int(x) for x in (p.get("ids") or "").split(",") if x.strip().isdigit()]
+    try:
+        name, data, n = await run(exporter.export, u, ids, p.get("folder") or "", p.get("month") or "")
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(u, "导出 Word", f"{name}（{n} 场）")
+    mt = "application/zip" if name.endswith(".zip") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return Response(data, media_type=mt, headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+# ---------------------------------------------------------------- 向量模型状态
+async def embed_state(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    return ok(embed.state())
+
+
+async def embed_retry(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    embed.retry()
+    embed.kick()
+    return ok(embed.state())
+
+
 # ---------------------------------------------------------------- 页面
 async def index(_):
     html = (BASE / "static" / "index.html").read_text(encoding="utf-8")
@@ -402,6 +477,13 @@ async def lifespan(_app):
     st = ingest.reclassify_state()
     if st.get("running"):
         ingest._set_state({**st, "running": False, "error": "服务重启，分类中断，请重新点“重新分类”"})
+    try:
+        n = chunks.backfill()
+        if n:
+            print(f"补切文本段：{n} 场会议", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print("补切文本段失败：", e, flush=True)
+    embed.start()
     yield
 
 
@@ -424,6 +506,12 @@ routes = [
     Route("/api/admin/members", members),
     Route("/api/admin/members/{uid:str}", member_set, methods=["PUT"]),
     Route("/api/admin/audit", audit_log),
+    Route("/api/ask", ask_api, methods=["POST"]),
+    Route("/api/ask/{id:int}/rate", ask_rate, methods=["POST"]),
+    Route("/api/admin/asks", asks),
+    Route("/api/export", export_api),
+    Route("/api/admin/embed", embed_state),
+    Route("/api/admin/embed/retry", embed_retry, methods=["POST"]),
     Route("/", index),
     Mount("/static", StaticFiles(directory=BASE / "static"), name="static"),
 ]

@@ -75,3 +75,28 @@ CREATE TABLE IF NOT EXISTS audit (
   detail TEXT,
   created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+
+-- 检索用的文本段（摘要、原文切成小段）；向量存在 DATA_DIR/vectors.npz（按 id 对应）
+CREATE TABLE IF NOT EXISTS chunk (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  meeting_id INTEGER NOT NULL,
+  kind TEXT,                       -- summary 摘要 / transcript 原文
+  seq INTEGER,
+  text TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_chunk_meeting ON chunk(meeting_id);
+
+-- 提问记录（含 👍👎）
+CREATE TABLE IF NOT EXISTS ask_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT,
+  user_name TEXT,
+  scope TEXT,
+  question TEXT,
+  answer TEXT,
+  sources TEXT,                    -- JSON
+  rating INTEGER,                  -- 1 有用 / -1 没用
+  comment TEXT,
+  seconds REAL,
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
