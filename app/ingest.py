@@ -225,7 +225,7 @@ def _progress(batch_id: int, step: str, done: int = 0, total: int = 0):
 def _run_import(batch_id: int, path: str):
     with _job_lock:
         try:
-            stats = _do_import(batch_id, path)
+            stats = _do_history(batch_id, path) if path.lower().endswith((".json", ".json.gz")) else _do_import(batch_id, path)
             with db.tx() as c:
                 c.execute("UPDATE import_batch SET status = 'done', stats = ?, finished_at = ? WHERE id = ?",
                           (json.dumps(stats, ensure_ascii=False), now(), batch_id))
@@ -345,6 +345,72 @@ def _do_import(batch_id: int, path: str) -> dict:
     out = dict(st)
     out["skipped_orgs"] = dict(skipped_orgs)
     out["llm"] = use_llm
+    return out
+
+
+def _do_history(batch_id: int, path: str) -> dict:
+    """导入「历史听记包」（scripts/history_pack.py 从管理员手工整理的 Word 文件夹生成）。
+    文件夹归属是管理员手工分的，当作人工确认（classified_by=manual），重新分类不会改。"""
+    import gzip
+    _progress(batch_id, "读取历史听记包")
+    opener = gzip.open if path.lower().endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict) or data.get("kind") != "tingji-history":
+        raise ValueError("这不是历史听记包（应由 scripts/history_pack.py 生成）")
+    items = data.get("items") or []
+    st = collections.Counter()
+    st["rows"] = len(items)
+    existing = {x["link_id"] for x in db.q("SELECT link_id FROM meeting_link")}
+    total = len(items)
+    for i, it in enumerate(items):
+        hid = str(it.get("id") or "")
+        entity = it.get("entity")
+        if not hid or entity not in (*rules.SUBS, "上海食品", "测试部门"):
+            st["other_org"] += 1
+            continue
+        if hid in existing:
+            st["dup_existing"] += 1
+            continue
+        t = it.get("start_time")
+        if t and t[:10] >= START_DATE:
+            st["after_start"] += 1   # 8月14日以后以 Excel 为准
+            continue
+        title = clean(it.get("title")) or "（无标题）"
+        summary = clean(it.get("summary"))
+        if summary.strip() in ("...", "无内容"):
+            summary = ""
+        tr = str(it.get("transcript") or "").strip()
+        if tr in ("...", "无内容"):
+            tr = ""
+        truncated = 1 if (len(tr) >= EXCEL_CELL_MAX or (tr.endswith("...") and len(tr) in range(2990, 3010))) else 0
+        empty = len(summary) < 30 and len(tr) < 200
+        r = rules.classify(entity if entity != "上海食品" else "均瑶集团上海食品有限公司", title, "", summary)
+        folders = [f for f in it.get("folders") or [] if f in rules.FOLDERS]
+        sensitive = bool(r.get("sensitive"))
+        if sensitive and rules.BIZ in folders:
+            folders = [f for f in folders if f != rules.BIZ] or ["人事"]
+        with db.tx() as c:
+            mid = db.insert(c, "meeting", {
+                "link": "", "title": title, "creator": "", "start_time": t, "duration": 0, "keywords": "",
+                "summary": summary, "todos": "", "transcript": tr, "truncated": truncated, "org": "历史文件夹",
+                "entity": entity, "mtype": r.get("type"), "sensitive": 1 if sensitive else 0,
+                "status": "empty" if empty else ("ok" if folders else "pending"), "confidence": 1.0,
+                "reason": "历史文件夹（管理员手工整理）", "classified_by": "manual", "batch_id": batch_id,
+                "created_at": now(), "updated_at": now()})
+            c.execute("INSERT INTO meeting_link (link_id, meeting_id, title) VALUES (?, ?, ?)", (hid, mid, title))
+            if not empty:
+                c.executemany("INSERT INTO meeting_folder (meeting_id, folder) VALUES (?, ?)", [(mid, f) for f in dict.fromkeys(folders)])
+        existing.add(hid)
+        st["empty" if empty else "new"] += 1
+        if truncated:
+            st["truncated"] += 1
+        if not t:
+            st["no_date"] += 1
+        if i % 50 == 0:
+            _progress(batch_id, "写入历史会议", i + 1, total)
+    out = dict(st)
+    out["history"] = True
     return out
 
 

@@ -38,7 +38,7 @@
     });
   }
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const fmtMonth = (ym) => { const [y, m] = ym.split("-"); return `${y}年${+m}月`; };
+  const fmtMonth = (ym) => { if (!ym || ym === "unknown") return "日期不详"; const [y, m] = ym.split("-"); return `${y}年${+m}月`; };
   const fmtDur = (n) => !n ? "" : n >= 60 ? `${Math.floor(n / 60)}小时${n % 60 ? (n % 60) + "分" : ""}` : `${n}分钟`;
   const fmtTime = (t) => (t || "").replace(/^(\d{4})-/, (m, y) => (y === String(new Date().getFullYear()) ? "" : y + "-"));
   function mark(html) {
@@ -234,13 +234,13 @@
     const todos = (m.todos || "").split(/[;；\n]/).map((x) => x.trim()).filter(Boolean);
     let h = `<div class="doc"><button class="btn sm back" id="back">← 返回列表</button>
       <h1 class="dt">${mark(esc(m.title))}</h1>
-      <div class="facts"><span><b>时间</b>${esc(m.start_time)}</span><span><b>创建人</b>${esc(m.creator || "—")}</span>${m.duration ? `<span><b>时长</b>${fmtDur(m.duration)}</span>` : ""}<span><b>主体</b>${esc(m.entity || "—")}</span></div>
+      <div class="facts"><span><b>时间</b>${esc(m.start_time || "日期不详")}</span>${m.creator ? `<span><b>创建人</b>${esc(m.creator)}</span>` : ""}${m.org === "历史文件夹" ? `<span><b>来源</b>历史文件夹</span>` : ""}${m.duration ? `<span><b>时长</b>${fmtDur(m.duration)}</span>` : ""}<span><b>主体</b>${esc(m.entity || "—")}</span></div>
       <div class="tags" style="margin-top:8px">${(m.folders || []).map(folderTag).join("")}${m.mtype && m.mtype !== "其他" ? `<span class="tag">${esc(m.mtype)}</span>` : ""}${m.sensitive ? `<span class="tag bad">敏感</span>` : ""}${m.status === "pending" ? `<span class="tag warn">待确认</span>` : ""}${m.keywords ? m.keywords.split(/[,，、]/).slice(0, 8).map((k) => `<span class="tag ok">${esc(k.trim())}</span>`).join("") : ""}</div>`;
     if (S.me.is_admin) h += classifyBox(m);
     h += `<div class="tabs"><button data-t="summary" class="${S.tab === "summary" ? "on" : ""}">摘要</button><button data-t="transcript" class="${S.tab === "transcript" ? "on" : ""}">原文</button><button data-t="todos" class="${S.tab === "todos" ? "on" : ""}">待办${todos.length ? ` (${todos.length})` : ""}</button></div>`;
     if (S.tab === "summary") h += m.summary ? `<div class="md">${mark(md(m.summary))}</div>` : `<div class="muted">这场会没有 AI 摘要，可以看原文。</div>`;
     if (S.tab === "transcript") {
-      if (m.truncated) h += `<div class="notice warn">原文太长，钉钉导出的 Excel 只保存了前 32,767 个字，后半段缺失。</div>`;
+      if (m.truncated) h += `<div class="notice warn">${m.org === "历史文件夹" ? "这份原文在以前整理的 Word 里就只保存了一部分，后半段缺失。" : "原文太长，钉钉导出的 Excel 只保存了前 32,767 个字，后半段缺失。"}</div>`;
       h += m.transcript ? `<div class="transcript">${mark(transcriptHtml(m.transcript))}</div>` : `<div class="muted">没有转写原文。</div>`;
     }
     if (S.tab === "todos") h += todos.length ? `<ol class="todos md">${todos.map((t) => `<li>${mark(esc(t))}</li>`).join("")}</ol>` : `<div class="muted">没有待办事项。</div>`;
@@ -287,8 +287,8 @@
   async function admImport() {
     const el = $("#adm");
     el.innerHTML = `<div class="card"><h3>上传听记 Excel</h3>
-      <p class="desc">从钉钉 AI听记导出的 Excel（工作表「听记汇总」）。每次传新的就行，重复的会按听记链接自动跳过；只收 2026-08-14 以后、名单内主体的听记。</p>
-      <label class="drop" id="drop"><input type="file" id="file" accept=".xlsx" hidden><div style="font-size:28px">📤</div><div>点击选择文件，或把 Excel 拖到这里</div></label></div>
+      <p class="desc">从钉钉 AI听记导出的 Excel（工作表「听记汇总」）。每次传新的就行，重复的会按听记链接自动跳过；只收 2026-08-14 以后、名单内主体的听记。<br>也可以传「历史听记包」（.json.gz，由以前手工整理的 Word 文件夹生成，文件夹归属原样保留）。</p>
+      <label class="drop" id="drop"><input type="file" id="file" accept=".xlsx,.gz,.json" hidden><div style="font-size:28px">📤</div><div>点击选择文件，或把 Excel 拖到这里</div></label></div>
       <div class="card"><h3>导入记录</h3><div id="batches" class="muted">加载中…</div></div>`;
     const drop = $("#drop"), file = $("#file");
     file.onchange = () => file.files[0] && upload(file.files[0]);
@@ -304,7 +304,7 @@
     catch (e) { toast(e.message, true); }
   }
   const STAT = [["new", "新增"], ["merged", "合并重复"], ["dup_existing", "以前导过"], ["dup_in_file", "表内重复"], ["empty", "空记录"], ["truncated", "原文被截断"],
-    ["pending", "待确认"], ["before_start", "8月14日以前"], ["other_org", "名单外主体"], ["no_title", "无标题/时间的行"]];
+    ["pending", "待确认"], ["no_date", "日期不详"], ["after_start", "8月14日以后（以Excel为准）"], ["before_start", "8月14日以前"], ["other_org", "名单外主体"], ["no_title", "无标题/时间的行"]];
   async function loadBatches() {
     clearTimeout(pollTimer);
     const el = $("#batches"); if (!el) return;
@@ -320,7 +320,7 @@
         const s = b.stats || {};
         res = `<div class="stats">${STAT.filter(([k]) => s[k]).map(([k, n]) => `<span>${n} <b>${s[k]}</b></span>`).join("")}</div>`
           + (s.skipped_orgs && Object.keys(s.skipped_orgs).length ? `<div class="muted" style="font-size:12px">名单外：${esc(Object.entries(s.skipped_orgs).map(([o, n]) => `${o} ${n}`).join("、"))}</div>` : "")
-          + `<div class="muted" style="font-size:12px">${s.llm ? "已用大模型分类" : "只用规则分类（还没配大模型）"}${s.empty ? ` · <a href="#" data-empty="${b.id}">看空记录</a>` : ""}</div>`;
+          + `<div class="muted" style="font-size:12px">${s.history ? "历史文件夹：按你手工分的文件夹归类" : s.llm ? "已用大模型分类" : "只用规则分类（还没配大模型）"}${s.empty ? ` · <a href="#" data-empty="${b.id}">看空记录</a>` : ""}</div>`;
       }
       return `<tr><td>${esc(b.created_at)}<div class="muted">${esc(b.uploaded_by || "")}</div></td><td>${esc(b.filename)}</td><td>${res}</td></tr>`;
     }).join("")}</table>`;

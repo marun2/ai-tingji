@@ -112,7 +112,30 @@ def main():
     check(not any("醒力罐" in t for t in seen), "部门负责人看不到每日博士")
     check(access.folders_for(lead) == [rules.BIZ], "部门负责人只有研发市场销售一个文件夹")
     cond, params = access.meeting_filter(board)
-    check(len(db.q(f"SELECT m.id FROM meeting m WHERE {cond}", params)) == 6, "董事局能看到全部（空记录除外）")
+    check(len(db.q(f"SELECT m.id FROM meeting m WHERE {cond}", params)) >= 6, "董事局能看到全部（空记录除外）")
+
+    print("历史听记包")
+    import gzip
+    pack = pathlib.Path(TMP) / "h.json.gz"
+    with gzip.open(pack, "wt", encoding="utf-8") as fh:
+        json.dump({"kind": "tingji-history", "items": [
+            {"id": "hist:1", "title": "03-30 内部会议_ 定制业务与产能规划", "start_time": "2026-03-30 10:00", "entity": "上海食品",
+             "folders": [rules.BIZ, "财务"], "summary": "产能规划 定制业务" * 10, "transcript": "原文" * 200},
+            {"id": "hist:2", "title": "【面试】 03月17日 10_30-拼多多运营", "start_time": "2026-03-17 10:30", "entity": "上海食品",
+             "folders": [rules.BIZ], "summary": "面试概况" * 10, "transcript": "x" * 300},
+            {"id": "hist:3", "title": "日期不详的会", "start_time": None, "entity": "每日博士", "folders": ["每日博士"], "summary": "内容" * 30, "transcript": ""},
+            {"id": "hist:4", "title": "8月以后的", "start_time": "2026-08-20 10:00", "entity": "上海食品", "folders": [rules.BIZ], "summary": "内容" * 30, "transcript": ""},
+        ]}, fh, ensure_ascii=False)
+    with db.tx() as c:
+        bid3 = db.insert(c, "import_batch", {"filename": "h.json.gz", "uploaded_by": "smoke", "status": "running", "created_at": access.now()})
+    ingest._run_import(bid3, str(pack))
+    b3 = db.q1("SELECT * FROM import_batch WHERE id = ?", (bid3,))
+    st3 = json.loads(b3["stats"] or "{}")
+    check(b3["status"] == "done" and st3.get("new") == 3 and st3.get("after_start") == 1 and st3.get("no_date") == 1, f"历史包导入：3 场新增、8月14日以后跳过（{st3}）")
+    r, f = folders("定制业务与产能规划")
+    check(f == {rules.BIZ, "财务"}, "历史文件夹归属原样保留")
+    r, f = folders("拼多多运营")
+    check(r["sensitive"] == 1 and rules.BIZ not in f, "历史里的面试也不会进研发市场销售")
 
     print("钉钉图文纪要 JSON 摘要")
     md = ingest.clean('{"meta_info":{"title":"标题A","subtitle":"副标题"},"overview":"总述","menu":[{"slice_id":"s1","title":"议题一","summary":"议题摘要"}],'

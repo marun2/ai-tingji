@@ -55,8 +55,10 @@ def chat(messages: list[dict], model: str | None = None, temperature: float = 0.
     s = settings()
     if not (s["llm_base_url"] and s["llm_api_key"] and s["llm_model"]):
         raise LLMError("还没有配置大模型（管理 → 模型设置）")
-    url = s["llm_base_url"]
+    url = s["llm_base_url"].rstrip("/")
     if not url.endswith("/chat/completions"):
+        if not re.search(r"/v\d+[a-z]*$", url):
+            url += "/v1"   # 只填了域名（如 https://api.jiceapi.com）时补上 /v1
         url += "/chat/completions"
     payload = json.dumps({"model": model or s["llm_model"], "messages": messages, "temperature": temperature,
                           "max_tokens": max_tokens, "stream": False}).encode()

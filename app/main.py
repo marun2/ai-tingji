@@ -69,11 +69,11 @@ def _tree(u):
                 f"JOIN meeting_folder f ON f.meeting_id = m.id WHERE {cond} GROUP BY f.folder, substr(m.start_time, 1, 7)", params)
     by = {}
     for r in rows:
-        by.setdefault(r["folder"], {})[r["ym"]] = r["n"]
+        by.setdefault(r["folder"], {})[r["ym"] or "unknown"] = r["n"]
     allowed = access.folders_for(u)
     folders = []
     for f in allowed:
-        months = sorted(by.get(f, {}).items(), reverse=True)
+        months = sorted(by.get(f, {}).items(), key=lambda x: ("" if x[0] == "unknown" else x[0]), reverse=True)
         folders.append({"name": f, "group": "板块" if f == rules.BIZ else ("上海食品" if f in rules.FUNC else "子公司"),
                         "count": sum(n for _, n in months), "months": [{"ym": ym, "count": n} for ym, n in months]})
     out = {"folders": folders}
@@ -113,7 +113,9 @@ def _list(u, folder, month, status, page):
             raise HTTPException(403, "没有这个文件夹的权限")
         where.append("EXISTS (SELECT 1 FROM meeting_folder f2 WHERE f2.meeting_id = m.id AND f2.folder = ?)")
         args.append(folder)
-    if month:
+    if month == "unknown":
+        where.append("m.start_time IS NULL")
+    elif month:
         where.append("substr(m.start_time, 1, 7) = ?")
         args.append(month)
     if status == "pending":
@@ -122,7 +124,7 @@ def _list(u, folder, month, status, page):
         where.append("m.status = 'pending'")
     w = " AND ".join(where)
     total = db.q1(f"SELECT COUNT(*) AS n FROM meeting m WHERE {w}", args)["n"]
-    items = db.q(f"SELECT {LIST_COLS} FROM meeting m WHERE {w} ORDER BY m.start_time DESC, m.id DESC LIMIT {PAGE} OFFSET ?",
+    items = db.q(f"SELECT {LIST_COLS} FROM meeting m WHERE {w} ORDER BY COALESCE(m.start_time, '') DESC, m.id DESC LIMIT {PAGE} OFFSET ?",
                  (*args, max(0, page - 1) * PAGE))
     return {"total": total, "page": page, "page_size": PAGE, "items": _attach_folders(items)}
 
@@ -251,8 +253,8 @@ async def import_upload(req):
     f = form.get("file")
     if not f or not getattr(f, "filename", ""):
         raise HTTPException(400, "请选择 Excel 文件")
-    if not f.filename.lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(400, "只支持 .xlsx 格式（钉钉 AI听记导出的表格）")
+    if not f.filename.lower().endswith((".xlsx", ".xlsm", ".json.gz", ".json")):
+        raise HTTPException(400, "只支持钉钉 AI听记导出的 .xlsx 表格，或历史听记包（.json.gz）")
     data = await f.read()
     if len(data) > MAX_UPLOAD:
         raise HTTPException(400, "文件太大（超过 60MB）")
