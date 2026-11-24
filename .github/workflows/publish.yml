@@ -1,0 +1,77 @@
+# 推送到 main：先检查代码，再用「管理员总发布密钥」自动发布到企业中台（应用 ai-tingji）
+# 仓库 Settings → Secrets and variables → Actions 里需要：
+#   ZT_URL               中台地址：https://hub.werdery.net
+#   ZT_ADMIN_DEPLOY_KEY  中台「管理 → GitHub 自动发布（管理员）」生成的密钥（zt_ak_ 开头，用户自己填）
+# 第一次发布会按 zhongtai.json 里的 app 信息自动在中台创建应用（可见范围默认“仅负责人”）；之后沿用中台里的设置。
+# 回滚：Actions 里找到之前成功的那次运行，点 “Re-run all jobs”；或在中台里回滚版本。
+name: 检查并发布到中台
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-ai-tingji
+  cancel-in-progress: false
+
+env:
+  APP: ai-tingji
+
+jobs:
+  check:
+    name: 检查代码
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: 安装依赖并跑冒烟测试
+        run: |
+          pip install -q -r requirements.txt
+          python -m compileall -q app scripts
+          python -c "import app.main"
+          python scripts/smoke.py
+
+  publish:
+    name: 发布到中台
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: 打包源码（只含仓库里的文件）
+        run: git archive --format=tar.gz -o source.tar.gz HEAD
+      - name: 上传并部署
+        id: publish
+        env:
+          ZT_URL: ${{ secrets.ZT_URL }}
+          ZT_KEY: ${{ secrets.ZT_ADMIN_DEPLOY_KEY }}
+        run: |
+          test -n "$ZT_URL" && test -n "$ZT_KEY" || { echo "::error::还没有在仓库 Secrets 里配置 ZT_URL / ZT_ADMIN_DEPLOY_KEY"; exit 1; }
+          NOTE=$(git log -1 --pretty=%s | head -c 200 | jq -sRr @uri)
+          META=$(jq -c .app zhongtai.json | jq -sRr @uri)
+          curl -fsS --retry 2 -X POST "$ZT_URL/api/ci/admin/apps/$APP/publish" \
+            -H "Authorization: Bearer $ZT_KEY" -H "X-Release-Note: $NOTE" -H "X-App-Meta: $META" \
+            -H "Content-Type: application/octet-stream" --data-binary @source.tar.gz -o result.json \
+            || { echo "::error::上传失败"; cat result.json 2>/dev/null; exit 1; }
+          cat result.json; echo
+          echo "version=$(jq -r .version result.json)" >> "$GITHUB_OUTPUT"
+      - name: 等待服务器构建并启动（最多 20 分钟）
+        env:
+          ZT_URL: ${{ secrets.ZT_URL }}
+          ZT_KEY: ${{ secrets.ZT_ADMIN_DEPLOY_KEY }}
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: |
+          for i in $(seq 1 120); do
+            curl -fsS "$ZT_URL/api/ci/admin/apps/$APP/releases/$VERSION" -H "Authorization: Bearer $ZT_KEY" -o st.json || true
+            S=$(jq -r .status st.json 2>/dev/null)
+            echo "v$VERSION：$S"
+            case "$S" in
+              live) echo "已上线：$(jq -r .url st.json)"; exit 0 ;;
+              pending_review) echo "已提交审核，管理员通过后上线"; exit 0 ;;
+              failed) echo "::error::部署失败：$(jq -r .error st.json)"; jq -r .log st.json; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "::error::20 分钟内没有完成，请在中台查看"; jq -r .log st.json; exit 1

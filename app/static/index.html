@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI听记</title>
+<link rel="stylesheet" href="static/style.css?v=__V__">
+</head>
+<body>
+<header class="band">
+  <div class="band-inner">
+    <div class="brand">
+      <div class="logo">记</div>
+      <div>
+        <div class="brand-name">AI听记</div>
+        <div class="brand-sub" id="brandSub">会议知识库</div>
+      </div>
+    </div>
+    <form class="search" id="searchForm" autocomplete="off">
+      <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="searchInput" placeholder="搜索会议：标题、人名、关键词、原文内容…">
+    </form>
+    <nav class="nav">
+      <button data-view="kb" class="on">知识库</button>
+      <button data-view="admin" id="navAdmin" hidden>管理</button>
+    </nav>
+    <div class="me" id="me"></div>
+  </div>
+</header>
+<main id="app"></main>
+<div id="toast"></div>
+<div id="modal" hidden></div>
+<script src="static/app.js?v=__V__"></script>
+</body>
+</html>

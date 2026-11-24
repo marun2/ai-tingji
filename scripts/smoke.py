@@ -1,0 +1,126 @@
+"""冒烟测试（CI 也跑）：造一份假的听记 Excel，走一遍导入 → 去重 → 合并 → 分类 → 权限。
+
+用法：python scripts/smoke.py
+不需要真实数据，也不需要大模型；用临时目录里的 SQLite。
+"""
+import os
+import pathlib
+import sys
+import tempfile
+
+TMP = tempfile.mkdtemp(prefix="tingji-smoke-")
+os.environ["DATA_DIR"] = TMP
+os.environ.pop("DATABASE_URL", None)
+os.environ.pop("ZT_APP", None)
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+import openpyxl  # noqa: E402
+
+from app import access, db, ingest, rules  # noqa: E402
+
+ok_count = 0
+
+
+def check(cond, msg):
+    global ok_count
+    if not cond:
+        print("  ✗", msg)
+        sys.exit(1)
+    ok_count += 1
+    print("  ✓", msg)
+
+
+def make_excel(path):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "听记汇总"
+    ws.append(list(ingest.COLS))
+    rows = [
+        # 标题, 创建人, 开始时间, 时长, 关键词, 摘要, 待办, 原文, 链接, 组织
+        ("11-18 豫鲁三区生意回顾与CNY规划", "张三", "2026-11-18 08:46", "104", "渠道, 销售", "## 会议背景\n区域销售复盘，经销商动销与 CNY 货盘。![图](https://x.oss-cn-hangzhou.aliyuncs.com/a.png){origin:1,2}", "张三：发货表", "[发言人 1] 大家好" * 50, "A1", "均瑶集团上海食品有限公司"),
+        ("会议录制：11-18 豫鲁三区生意回顾与CNY规划", "张三", "2026-11-18 08:47", "103", "", "短摘要", "", "", "A2", "均瑶集团上海食品有限公司"),
+        ("【面试】 11月20日 14:00-线下销售负责人-视频面试-某某", "李四", "2026-11-20 13:57", "37", "", "## 面试概况\n候选人经历介绍" * 5, "", "x" * 300, "B1", "均瑶集团上海食品有限公司"),
+        ("11-19 财务KPI指标与降本考核方案", "王五", "2026-11-19 11:03", "23", "预算, 费用", "预算、费用核销、审计、资金、现金流、应收、计提、税务" * 3, "", "y" * 300, "C1", "均瑶集团上海食品有限公司"),
+        ("11-20 醒力罐品牌定调与物料分工", "赵六", "2026-11-20 11:02", "58", "", "品牌会议 产品 包装" * 10, "", "z" * 300, "D1", "每日博士（上海）商贸有限公司"),
+        ("11-18 益生菌品类战略", "钱七", "2026-11-18 17:29", "23", "", "益生菌 品类 战略 渠道" * 10, "", "w" * 300, "E1", "上海均瑶云商网络科技有限公司"),
+        ("名单外公司的会", "孙八", "2026-11-18 10:00", "10", "", "内容" * 50, "", "", "F1", "上海璟瑞企业管理有限公司"),
+        ("8月14日以前的会", "孙八", "2026-08-01 10:00", "10", "", "内容" * 50, "", "", "G1", "均瑶集团上海食品有限公司"),
+        ("空记录", "孙八", "2026-11-18 11:00", "1", "", "", "", "", "H1", "均瑶集团上海食品有限公司"),
+        (None, None, None, None, None, None, None, "残留的原文行", "I1", "均瑶集团上海食品有限公司"),
+        ("截断的长会", "周九", "2026-11-17 09:00", "200", "", "经营分析 销售" * 20, "", "长" * ingest.EXCEL_CELL_MAX, "J1", "均瑶集团上海食品有限公司"),
+    ]
+    for r in rows:
+        ws.append(list(r[:8]) + ["view", r[9]])
+        cell = ws.cell(ws.max_row, 9)
+        cell.hyperlink = f"https://shanji.dingtalk.com/app/transcribes/{r[8]}"
+    wb.save(path)
+
+
+def main():
+    print("临时数据目录：", TMP)
+    db.init()
+    xlsx = pathlib.Path(TMP) / "test.xlsx"
+    make_excel(xlsx)
+
+    print("导入")
+    with db.tx() as c:
+        bid = db.insert(c, "import_batch", {"filename": "test.xlsx", "uploaded_by": "smoke", "status": "running", "created_at": access.now()})
+    ingest._run_import(bid, str(xlsx))
+    b = db.q1("SELECT * FROM import_batch WHERE id = ?", (bid,))
+    check(b["status"] == "done", f"导入完成（{b['error'] or ''}）")
+    import json
+    st = json.loads(b["stats"])
+    check(st.get("no_title") == 1, "没有标题的残留行被丢掉")
+    check(st.get("other_org") == 1, "名单外主体不导入")
+    check(st.get("before_start") == 1, "8月14日以前的不导入")
+    check(st.get("merged") == 1, "「会议录制：」和同名听记合并成一场")
+    check(st.get("empty") == 1, "空记录单独标记")
+    check(st.get("truncated") == 1, "被 Excel 截断的原文有标记")
+
+    m = db.q1("SELECT * FROM meeting WHERE title LIKE ?", ("%豫鲁三区%",))
+    check(not m["title"].startswith("会议录制"), "合并后用不带「会议录制」的标题")
+    check("aliyuncs" not in m["summary"] and "origin:" not in m["summary"], "摘要里的图片外链和录音位置标记被去掉")
+    check(len(db.q("SELECT * FROM meeting_link WHERE meeting_id = ?", (m["id"],))) == 2, "两个听记链接都记下来（以后去重用）")
+
+    def folders(title):
+        r = db.q1("SELECT id, sensitive, status FROM meeting WHERE title LIKE ?", (f"%{title}%",))
+        return r, {x["folder"] for x in db.q("SELECT folder FROM meeting_folder WHERE meeting_id = ?", (r["id"],))}
+
+    r, f = folders("面试")
+    check(r["sensitive"] == 1 and rules.BIZ not in f and "人事" in f, "面试 → 人事、敏感，不进研发市场销售")
+    r, f = folders("财务KPI")
+    check("财务" in f, "财务类会议进财务")
+    r, f = folders("醒力罐")
+    check(f == {"每日博士"}, "每日博士的会只在每日博士")
+    r, f = folders("益生菌品类")
+    check(f == {"均瑶云商", rules.BIZ}, "均瑶云商的业务会同时进研发市场销售")
+
+    print("再导一次同一个文件")
+    with db.tx() as c:
+        bid2 = db.insert(c, "import_batch", {"filename": "test.xlsx", "uploaded_by": "smoke", "status": "running", "created_at": access.now()})
+    ingest._run_import(bid2, str(xlsx))
+    st2 = json.loads(db.q1("SELECT stats FROM import_batch WHERE id = ?", (bid2,))["stats"])
+    check(not st2.get("new") and st2.get("dup_existing") == 8, f"重复导入全部跳过（{st2}）")
+
+    print("权限")
+    lead = {"id": "x", "name": "负责人", "dept": "sales", "role": "biz", "is_admin": False, "see_all": False}
+    board = {"id": "y", "name": "董事", "dept": "board", "role": "all", "is_admin": False, "see_all": True}
+    cond, params = access.meeting_filter(lead)
+    seen = {x["title"] for x in db.q(f"SELECT m.title FROM meeting m WHERE {cond}", params)}
+    check(not any("面试" in t for t in seen), "部门负责人看不到面试")
+    check(any("豫鲁三区" in t for t in seen), "部门负责人能看到研发市场销售里的业务会")
+    check(not any("醒力罐" in t for t in seen), "部门负责人看不到每日博士")
+    check(access.folders_for(lead) == [rules.BIZ], "部门负责人只有研发市场销售一个文件夹")
+    cond, params = access.meeting_filter(board)
+    check(len(db.q(f"SELECT m.id FROM meeting m WHERE {cond}", params)) == 6, "董事局能看到全部（空记录除外）")
+
+    print("钉钉图文纪要 JSON 摘要")
+    md = ingest.clean('{"meta_info":{"title":"标题A","subtitle":"副标题"},"overview":"总述","menu":[{"slice_id":"s1","title":"议题一","summary":"议题摘要"}],'
+                      '"details":[{"slice_id":"s1","detail_json":{"blocks":[{"type":"callout","content":["要点1"]},{"type":"module","title":"模块","children":[{"type":"content-list","items":[{"title":"小标题","content":["内容"]}]}]}]}}]}')
+    check("# 标题A" in md and "## 议题一" in md and "**小标题**：内容" in md and "{" not in md, "JSON 摘要转成可读文字")
+
+    print(f"\n全部通过（{ok_count} 项）")
+
+
+if __name__ == "__main__":
+    main()

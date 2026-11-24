@@ -1,0 +1,11 @@
+{
+  "memory_mb": 768,
+  "app": {
+    "name": "AI听记",
+    "description": "钉钉 AI听记会议知识库：按部门浏览、搜索、提问，自动周报月报",
+    "visibility": "private",
+    "biz_dept": "board",
+    "category": "ai",
+    "ownership": "company"
+  }
+}
