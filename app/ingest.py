@@ -225,7 +225,7 @@ def _progress(batch_id: int, step: str, done: int = 0, total: int = 0):
 def _run_import(batch_id: int, path: str):
     with _job_lock:
         try:
-            stats = _do_history(batch_id, path) if path.lower().endswith((".json", ".json.gz")) else _do_import(batch_id, path)
+            stats = _do_history(batch_id, path) if path.lower().endswith((".json", ".gz", ".zip")) else _do_import(batch_id, path)
             with db.tx() as c:
                 c.execute("UPDATE import_batch SET status = 'done', stats = ?, finished_at = ? WHERE id = ?",
                           (json.dumps(stats, ensure_ascii=False), now(), batch_id))
@@ -356,10 +356,17 @@ def _do_history(batch_id: int, path: str) -> dict:
     """导入「历史听记包」（scripts/history_pack.py 从管理员手工整理的 Word 文件夹生成）。
     文件夹归属是管理员手工分的，当作人工确认（classified_by=manual），重新分类不会改。"""
     import gzip
-    _progress(batch_id, "读取历史听记包")
-    opener = gzip.open if path.lower().endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8") as f:
-        data = json.load(f)
+    from . import history
+    with open(path, "rb") as f:
+        magic = f.read(4)
+    if magic[:2] == b"PK":            # 原始压缩包（Word 文件夹）
+        _progress(batch_id, "读取压缩包里的 Word")
+        data = history.build(path, lambda d, t: _progress(batch_id, "读取压缩包里的 Word", d, t))
+    else:                             # 历史听记包：.json.gz（下载时浏览器可能已经自动解压成 .json）
+        _progress(batch_id, "读取历史听记包")
+        opener = gzip.open if magic[:2] == b"\x1f\x8b" else open
+        with opener(path, "rt", encoding="utf-8") as f:
+            data = json.load(f)
     if not isinstance(data, dict) or data.get("kind") != "tingji-history":
         raise ValueError("这不是历史听记包（应由 scripts/history_pack.py 生成）")
     items = data.get("items") or []

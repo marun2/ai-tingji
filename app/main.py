@@ -25,7 +25,7 @@ from . import access, chunks, db, embed, exporter, ingest, llm, qa, rules
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
-MAX_UPLOAD = 60 * 1024 * 1024
+MAX_UPLOAD = 220 * 1024 * 1024   # 历史压缩包约 120MB
 PAGE = 50
 
 
@@ -255,17 +255,20 @@ async def import_upload(req):
     f = form.get("file")
     if not f or not getattr(f, "filename", ""):
         raise HTTPException(400, "请选择 Excel 文件")
-    if not f.filename.lower().endswith((".xlsx", ".xlsm", ".json.gz", ".json")):
-        raise HTTPException(400, "只支持钉钉 AI听记导出的 .xlsx 表格，或历史听记包（.json.gz）")
-    data = await f.read()
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(400, "文件太大（超过 60MB）")
+    if not f.filename.lower().endswith((".xlsx", ".xlsm", ".zip", ".gz", ".json")):
+        raise HTTPException(400, "只支持钉钉 AI听记导出的 .xlsx 表格、历史文件夹压缩包（.zip）或历史听记包（.json.gz）")
     with db.tx() as c:
         bid = db.insert(c, "import_batch", {"filename": f.filename, "uploaded_by": u["name"], "status": "running", "created_at": access.now()})
     UPLOADS.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^\w.\-一-鿿]", "_", f.filename)[-80:]
     path = UPLOADS / f"{bid}-{safe}"
-    path.write_bytes(data)
+    import shutil
+    await f.seek(0)
+    with open(path, "wb") as out:          # 边读边写，大压缩包不占内存
+        await run(shutil.copyfileobj, f.file, out, 4 << 20)
+    if path.stat().st_size > MAX_UPLOAD:
+        path.unlink(missing_ok=True)
+        raise HTTPException(400, "文件太大（超过 220MB）")
     audit(u, "导入", f.filename)
     ingest.start_import(bid, str(path))
     return ok({"id": bid})

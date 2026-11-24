@@ -390,8 +390,8 @@
   async function admImport() {
     const el = $("#adm");
     el.innerHTML = `<div class="card"><h3>上传听记 Excel</h3>
-      <p class="desc">从钉钉 AI听记导出的 Excel（工作表「听记汇总」）。每次传新的就行，重复的会按听记链接自动跳过；只收 2026-08-14 以后、名单内主体的听记。<br>也可以传「历史听记包」（.json.gz，由以前手工整理的 Word 文件夹生成，文件夹归属原样保留）。</p>
-      <label class="drop" id="drop"><input type="file" id="file" accept=".xlsx,.gz,.json" hidden><div style="font-size:28px">📤</div><div>点击选择文件，或把 Excel 拖到这里</div></label></div>
+      <p class="desc">从钉钉 AI听记导出的 Excel（工作表「听记汇总」）。每次传新的就行，重复的会按听记链接自动跳过；只收 2026-08-14 以后、名单内主体的听记。<br>8月14日以前的历史：直接传以前手工整理的<b>文件夹压缩包（.zip）</b>，或者我生成的「历史听记包」（.json.gz），文件夹归属原样保留。大压缩包上传要几分钟，别关页面。</p>
+      <label class="drop" id="drop"><input type="file" id="file" accept=".xlsx,.zip,.gz,.json" hidden><div style="font-size:28px">📤</div><div>点击选择文件，或把 Excel 拖到这里</div></label></div>
       <div class="card"><h3>导入记录</h3><div id="batches" class="muted">加载中…</div></div>`;
     const drop = $("#drop"), file = $("#file");
     file.onchange = () => file.files[0] && upload(file.files[0]);
@@ -402,9 +402,17 @@
   }
   async function upload(f) {
     const fd = new FormData(); fd.append("file", f);
-    toast("上传中…");
-    try { await api("api/imports", { method: "POST", body: fd }); toast("已开始导入"); loadBatches(); }
-    catch (e) { toast(e.message, true); }
+    const drop = $("#drop"); const mb = (f.size / 1048576).toFixed(1);
+    // 用 XHR 才能看到上传进度（大压缩包要几分钟）
+    await new Promise((done) => {
+      const x = new XMLHttpRequest(); x.open("POST", "api/imports");
+      x.upload.onprogress = (e) => { if (e.lengthComputable && drop) drop.innerHTML = `<div style="font-size:28px">⏫</div><div>正在上传 ${esc(f.name)}（${mb}MB）… ${Math.round(e.loaded / e.total * 100)}%</div><div class="progress" style="max-width:360px;margin:8px auto 0"><div style="width:${e.loaded / e.total * 100}%"></div></div>`; };
+      x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch { /* */ }
+        if (x.status >= 200 && x.status < 300) toast("上传完成，开始导入"); else toast(d.error || `上传失败（${x.status}）`, true); done(); };
+      x.onerror = () => { toast("上传中断了，请检查网络后重试", true); done(); };
+      x.send(fd);
+    });
+    admImport();
   }
   const STAT = [["new", "新增"], ["merged", "合并重复"], ["dup_existing", "以前导过"], ["dup_in_file", "表内重复"], ["empty", "空记录"], ["truncated", "原文被截断"],
     ["pending", "待确认"], ["no_date", "日期不详"], ["after_start", "8月14日以后（以Excel为准）"], ["before_start", "8月14日以前"], ["other_org", "名单外主体"], ["no_title", "无标题/时间的行"]];
