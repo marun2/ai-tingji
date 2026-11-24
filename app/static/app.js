@@ -37,6 +37,7 @@
       m.onclick = (e) => { const a = e.target.dataset.a; if (a !== undefined || e.target === m) { m.hidden = true; res(a === "1"); } };
     });
   }
+  const GLYPH = '<svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="7" width="2" height="4" rx="1" fill="#d1d1d6"/><rect x="6" y="4" width="2" height="10" rx="1" fill="#c7c7cc"/><rect x="10" y="2" width="2" height="14" rx="1" fill="#b8b8bc"/><rect x="14" y="6" width="2" height="6" rx="1" fill="#d1d1d6"/></svg>';
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmtMonth = (ym) => { if (!ym || ym === "unknown") return "日期不详"; const [y, m] = ym.split("-"); return `${y}年${+m}月`; };
   const fmtDur = (n) => !n ? "" : n >= 60 ? `${Math.floor(n / 60)}小时${n % 60 ? (n % 60) + "分" : ""}` : `${n}分钟`;
@@ -88,10 +89,10 @@
   // ------------------------------------------------------------ 启动
   async function boot() {
     try { S.me = await api("api/me"); }
-    catch (e) { app.innerHTML = `<div class="empty-state"><div><div class="big">🔒</div>${esc(e.message)}</div></div>`; return; }
-    $("#me").innerHTML = `<div>${esc(S.me.name)}</div><div class="role">${esc(S.me.role_label)}</div>`;
+    catch (e) { app.innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>${esc(e.message)}</div></div>`; return; }
+    $("#me").innerHTML = `<div class="av">${esc((S.me.name || "?").slice(0, 1))}</div><div style="min-width:0"><div>${esc(S.me.name)}</div><div class="role">${esc(S.me.role_label)}</div></div>`;
     $("#navAdmin").hidden = !S.me.is_admin;
-    if (S.me.role === "none") { app.innerHTML = `<div class="empty-state"><div><div class="big">🔒</div>你没有查看听记的权限，请联系管理员</div></div>`; return; }
+    if (S.me.role === "none") { app.innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>你没有查看听记的权限，请联系管理员</div></div>`; return; }
     $$(".nav button").forEach((b) => b.onclick = () => go(b.dataset.view));
     $("#searchForm").onsubmit = (e) => { e.preventDefault(); doSearch($("#searchInput").value); };
     go("ask");
@@ -122,7 +123,7 @@
     const groups = [["板块", "📁"], ["上海食品", "🏢"], ["子公司", "🏬"]];
     let h = "";
     if (S.tree.pending !== undefined) {
-      h += `<div class="node pending ${S.sel.pending ? "on" : ""}" data-pending="1"><span class="ico">⏳</span>待确认<span class="n">${S.tree.pending}</span></div>`;
+      h += `<div class="node pending ${S.sel.pending ? "on" : ""}" data-pending="1"><span class="ico"></span>待确认<span class="n">${S.tree.pending}</span></div>`;
     }
     for (const [g, ico] of groups) {
       const fs = S.tree.folders.filter((f) => f.group === g);
@@ -172,7 +173,7 @@
     let h = `<div class="list-head"><div class="t">${esc(title)}${!isSearch && !S.sel.pending && total ? `<a class="btn sm export" href="${exportUrl({ folder: S.sel.folder, month: S.sel.month })}" title="每场会一个 Word，打包成 zip">导出 Word</a>` : ""}</div><div class="s">${esc(desc)}</div>`;
     if (pending && items.length) h += `<div class="tools"><button class="btn sm" id="chkAll">全选本页</button><button class="btn sm primary" id="confirmSel" disabled>确认所选（按现在的归类）</button></div>`;
     h += `</div><div class="items">`;
-    if (!items.length) h += `<div class="empty-state"><div><div class="big">🗂</div>${isSearch ? "没有找到相关会议" : S.sel.pending ? "没有待确认的会议" : "这里还没有会议"}</div></div>`;
+    if (!items.length) h += `<div class="empty-state"><div><div class="big">${GLYPH}</div>${isSearch ? "没有找到相关会议" : S.sel.pending ? "没有待确认的会议" : "这里还没有会议"}</div></div>`;
     for (const m of items) {
       const tags = (m.folders || []).map(folderTag).join("") + (m.mtype && m.mtype !== "其他" ? `<span class="tag">${esc(m.mtype)}</span>` : "")
         + (m.sensitive ? `<span class="tag bad">敏感</span>` : "") + (m.status === "pending" && !pending ? `<span class="tag warn">待确认</span>` : "");
@@ -232,7 +233,7 @@
   function renderPreview() {
     const el = $("#preview"); if (!el) return;
     const m = S.doc;
-    if (!m || m.id !== S.cur) { el.innerHTML = `<div class="empty-state"><div><div class="big">📄</div>选择一场会议查看摘要和原文</div></div>`; return; }
+    if (!m || m.id !== S.cur) { el.innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>选择一场会议查看摘要和原文</div></div>`; return; }
     const todos = (m.todos || "").split(/[;；\n]/).map((x) => x.trim()).filter(Boolean);
     let h = `<div class="doc"><button class="btn sm back" id="back">← 返回列表</button>
       <div class="doc-acts"><a class="btn sm" href="${exportUrl({ ids: m.id })}">导出 Word</a></div><h1 class="dt">${mark(esc(m.title))}</h1>
@@ -283,7 +284,7 @@
   function renderAsk() {
     const folders = S.me.folders || [];
     app.innerHTML = `<div class="ask"><div class="ask-inner">
-      <div class="ask-hero" ${ASK.thread.length ? "hidden" : ""}><div class="ask-logo">记</div><h2>问问会议记录</h2>
+      <div class="ask-hero" ${ASK.thread.length ? "hidden" : ""}><div class="ask-logo"><svg width="26" height="26" viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="7" width="2" height="4" rx="1" fill="#8e8e93"/><rect x="6" y="4" width="2" height="10" rx="1" fill="#55555a"/><rect x="10" y="2" width="2" height="14" rx="1" fill="#3a3a3c"/><rect x="14" y="6" width="2" height="6" rx="1" fill="#8e8e93"/></svg></div><h2>问问会议记录</h2>
         <p>根据${S.me.see_all ? "全公司" : "「研发市场销售」"}的会议摘要和原文回答，每个要点都标出处，点一下就能打开那场会。</p>
         <div class="chips">${SUGGEST.map((q) => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div></div>
       <div id="thread"></div></div>
@@ -316,7 +317,7 @@
         const src = cited.length ? `<div class="srcs"><div class="srcs-h">出处 · ${cited.length} 处</div>${cited.map((s) => `<div class="src" data-i="${i}" data-n="${s.n}"><span class="n">${s.n}</span><div><div class="st">${esc(s.title)}</div><div class="sm">${esc(s.date || "日期不详")} · ${s.kind === "summary" ? "摘要" : "原文"}</div><div class="sx">${esc(plain(s.text).slice(0, 120))}…</div></div></div>`).join("")}</div>` : "";
         a = `<div class="a"><div class="md">${answerHtml(t.answer, t.sources)}</div>${src}
           <div class="a-note">回答里的数字和说法来自会议发言，未经核实；重要决定请点出处看原文。</div><div class="a-foot"><span class="muted">${t.seconds} 秒${t.vector ? "" : " · 只用了关键词检索"}${t.range && (t.range[0] || t.range[1]) ? ` · 时间 ${t.range[0] || "…"} ~ ${t.range[1] || "今天"}` : ""}</span>
-          <button class="rate ${t.rating === 1 ? "on" : ""}" data-i="${i}" data-r="1" title="有用">👍</button><button class="rate ${t.rating === -1 ? "on" : ""}" data-i="${i}" data-r="-1" title="没用">👎</button></div></div>`;
+          <button class="rate ${t.rating === 1 ? "on" : ""}" data-i="${i}" data-r="1" title="有用" aria-label="有用"><svg viewBox="0 0 24 24"><path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7V10l4-8a3 3 0 0 1 4 3.9z"/></svg></button><button class="rate ${t.rating === -1 ? "on" : ""}" data-i="${i}" data-r="-1" title="没用" aria-label="没用"><svg viewBox="0 0 24 24"><path d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.6 3H17v11l-4 8a3 3 0 0 1-4-3.9z"/></svg></button></div></div>`;
       }
       return `<div class="turn"><div class="q">${esc(t.q)}</div>${a}</div>`;
     }).join("");
@@ -384,7 +385,21 @@
 
 
   // ------------------------------------------------------------ 洞察（可视化）
-  const TCOLOR = { 部门: "#1d3f78", 客户: "#2f5bea", 产品: "#0e9f6e", 竞品: "#e0453a", 项目: "#c26b04", 区域: "#7c3aed", 话题: "#0891b2" };
+  // 灰白主题：类别靠形状区分（实心圆=部门、空心圆=客户、方块=产品、菱形=竞品、空心方=项目、中灰圆=区域、浅灰圆=话题）
+  const TCOLOR = { 部门: "#3a3a3c", 客户: "#6e6e73", 产品: "#6e6e73", 竞品: "#55555a", 项目: "#8e8e93", 区域: "#a1a1a6", 话题: "#c7c7cc" };
+  function shapeEl(type, r) {
+    const c = TCOLOR[type] || "#8e8e93";
+    if (type === "产品") return svgEl("rect", { x: -r * 0.85, y: -r * 0.85, width: r * 1.7, height: r * 1.7, rx: r * 0.35, fill: c, stroke: "#fff", "stroke-width": 1.5 });
+    if (type === "竞品") return svgEl("rect", { x: -r * 0.75, y: -r * 0.75, width: r * 1.5, height: r * 1.5, transform: "rotate(45)", fill: "#fff", stroke: c, "stroke-width": 2 });
+    if (type === "项目") return svgEl("rect", { x: -r * 0.8, y: -r * 0.8, width: r * 1.6, height: r * 1.6, rx: 2, fill: "#fff", stroke: c, "stroke-width": 2 });
+    if (type === "客户") return svgEl("circle", { r, fill: "#fff", stroke: c, "stroke-width": 2 });
+    return svgEl("circle", { r, fill: c, stroke: "#fff", "stroke-width": 1.5 });
+  }
+  function shapeIcon(type) {
+    const s = svgEl("svg", { width: 12, height: 12, viewBox: "-7 -7 14 14", "aria-hidden": "true" });
+    s.appendChild(shapeEl(type, 5));
+    return s.outerHTML;
+  }
   const INS = { tab: "cockpit", days: 90, types: ["客户", "产品", "竞品", "项目", "区域", "话题"], riverKind: "话题", raf: null };
   const svgEl = (tag, attrs = {}) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
   function renderInsight() {
@@ -396,7 +411,7 @@
   }
   const daysSel = () => `<select id="insDays">${[[30, "近 30 天"], [90, "近 90 天"], [180, "近半年"], [365, "近一年"]].map(([d, n]) => `<option value="${d}" ${INS.days === d ? "selected" : ""}>${n}</option>`).join("")}</select>`;
   function bindDays(fn) { const d = $("#insDays"); if (d) d.onchange = () => { INS.days = +d.value; fn(); }; }
-  const emptyIns = (msg) => `<div class="empty-state"><div><div class="big">✨</div>${msg}</div></div>`;
+  const emptyIns = (msg) => `<div class="empty-state"><div><div class="big">${GLYPH}</div>${msg}</div></div>`;
 
   async function insCockpit() {
     $("#insOpts").innerHTML = "";
@@ -404,7 +419,7 @@
     let d; try { d = await api("api/insights/cockpit"); } catch (e) { el.innerHTML = emptyIns(esc(e.message)); return; }
     const mx = Math.max(1, ...d.trend);
     const W = 560, H = 150, bw = W / d.trend.length;
-    const bars = d.trend.map((v, i) => `<rect x="${i * bw + 6}" y="${H - 20 - (v / mx) * (H - 40)}" width="${bw - 12}" height="${(v / mx) * (H - 40)}" rx="4" fill="${i === d.trend.length - 1 ? "#2f5bea" : "#b9c8f5"}"><title>${d.trend_labels[i]} 那周：${v} 场</title></rect><text x="${i * bw + bw / 2}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#8b94a5">${d.trend_labels[i]}</text>${v ? `<text x="${i * bw + bw / 2}" y="${H - 24 - (v / mx) * (H - 40)}" text-anchor="middle" font-size="10" fill="#4f596b">${v}</text>` : ""}`).join("");
+    const bars = d.trend.map((v, i) => `<rect x="${i * bw + 6}" y="${H - 20 - (v / mx) * (H - 40)}" width="${bw - 12}" height="${(v / mx) * (H - 40)}" rx="4" fill="${i === d.trend.length - 1 ? "#6e6e73" : "#dcdbd7"}"><title>${d.trend_labels[i]} 那周：${v} 场</title></rect><text x="${i * bw + bw / 2}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#8b94a5">${d.trend_labels[i]}</text>${v ? `<text x="${i * bw + bw / 2}" y="${H - 24 - (v / mx) * (H - 40)}" text-anchor="middle" font-size="10" fill="#4f596b">${v}</text>` : ""}`).join("");
     const delta = d.this_week - d.last_week;
     const list = (items, fmt) => items.length ? items.map((x) => `<div class="li" data-m="${x.meeting_id}">${fmt(x)}<div class="lm">${esc((x.start_time || "").slice(5, 10))} · ${esc(x.title)}</div></div>`).join("") : `<div class="muted">近两周暂无</div>`;
     el.innerHTML = `<div class="cockpit">
@@ -414,16 +429,16 @@
         <div class="kpi"><div class="kl">最近导入</div><div class="kn sm">${esc((d.last_import || "还没导入").slice(0, 10))}</div>${d.pending ? `<div class="kd warn">待确认 ${d.pending} 场</div>` : ""}</div></div>
       <div class="cgrid">
         <div class="card"><h3>近 12 周会议数</h3><svg viewBox="0 0 ${W} ${H}" class="trend">${bars}</svg></div>
-        <div class="card"><h3>升温最快</h3><p class="desc">最近两周比之前六周提得明显更多的客户、产品、话题</p>${d.rising.length ? d.rising.map((r) => `<div class="rise"><span class="dot" style="background:${TCOLOR[r.type] || "#888"}"></span><span class="rn">${esc(r.name)}</span><span class="muted">${r.type}</span><span class="rb"><i style="width:${Math.min(100, r.lift * 40)}%"></i></span><span class="rv">${r.recent} 场</span></div>`).join("") : `<div class="muted">数据还不够</div>`}</div>
-        <div class="card"><h3>⚠️ 近两周的风险与问题</h3>${list(d.risks, (x) => esc(x.text))}</div>
-        <div class="card"><h3>✅ 近两周的决议</h3>${list(d.decisions, (x) => esc(x.text))}</div>
-        <div class="card wide"><h3>📈 近两周会上提到的数字</h3><p class="desc">来自会议发言，未经财务核实</p>${list(d.metrics, (x) => `<b>${esc(x.label)}</b> ${esc(x.value)}${esc(x.unit || "")} <span class="muted">${esc(x.text)}</span>`)}</div>
+        <div class="card"><h3>升温最快</h3><p class="desc">最近两周比之前六周提得明显更多的客户、产品、话题</p>${d.rising.length ? d.rising.map((r) => `<div class="rise">${shapeIcon(r.type)}<span class="rn">${esc(r.name)}</span><span class="muted">${r.type}</span><span class="rb"><i style="width:${Math.min(100, r.lift * 40)}%"></i></span><span class="rv">${r.recent} 场</span></div>`).join("") : `<div class="muted">数据还不够</div>`}</div>
+        <div class="card"><h3>近两周的风险与问题</h3>${list(d.risks, (x) => esc(x.text))}</div>
+        <div class="card"><h3>近两周的决议</h3>${list(d.decisions, (x) => esc(x.text))}</div>
+        <div class="card wide"><h3>近两周会上提到的数字</h3><p class="desc">来自会议发言，未经财务核实</p>${list(d.metrics, (x) => `<b>${esc(x.label)}</b> ${esc(x.value)}${esc(x.unit || "")} <span class="muted">${esc(x.text)}</span>`)}</div>
       </div></div>`;
     $$(".li[data-m]", el).forEach((x) => x.onclick = () => openMeetingModal(+x.dataset.m));
   }
 
   async function insGraph() {
-    $("#insOpts").innerHTML = daysSel() + `<span class="legend">${Object.entries(TCOLOR).map(([t, c]) => `<label class="lg ${t === "部门" || INS.types.includes(t) ? "" : "off"}" data-t="${t}"><i style="background:${c}"></i>${t}</label>`).join("")}</span>`;
+    $("#insOpts").innerHTML = daysSel() + `<span class="legend">${Object.entries(TCOLOR).map(([t, c]) => `<label class="lg ${t === "部门" || INS.types.includes(t) ? "" : "off"}" data-t="${t}">${shapeIcon(t)}${t}</label>`).join("")}</span>`;
     bindDays(insGraph);
     $$(".lg").forEach((l) => l.onclick = () => { const t = l.dataset.t; if (t === "部门") return; INS.types = INS.types.includes(t) ? INS.types.filter((x) => x !== t) : [...INS.types, t]; insGraph(); });
     const el = $("#insBody"); el.innerHTML = emptyIns("加载中…");
@@ -431,9 +446,9 @@
     if (d.nodes.length < 2) { el.innerHTML = emptyIns("还没有足够的数据画图谱：需要先在「管理 → 模型与检索」里完成会议信息抽取"); return; }
     el.innerHTML = `<div class="graph-wrap"><svg id="gsvg"></svg><div class="gside" id="gside"><div class="muted">点任意一个点，看相关的会议。<br>滚轮缩放，拖动空白处平移。<br>近 ${d.days} 天 ${d.meetings} 场会。</div></div></div>`;
     forceGraph($("#gsvg"), d.nodes, d.edges, async (n) => {
-      const side = $("#gside"); side.innerHTML = `<div class="gs-h"><span class="dot" style="background:${TCOLOR[n.type]}"></span>${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div><div class="muted">加载中…</div>`;
+      const side = $("#gside"); side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div><div class="muted">加载中…</div>`;
       const r = await api("api/insights/node?" + new URLSearchParams({ id: n.id, days: INS.days }));
-      side.innerHTML = `<div class="gs-h"><span class="dot" style="background:${TCOLOR[n.type]}"></span>${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div>` +
+      side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div>` +
         `<button class="btn sm" id="gAsk" style="margin:4px 0 10px">问问关于「${esc(n.name)}」</button>` +
         r.items.map((m) => `<div class="li" data-m="${m.id}"><div>${esc(m.title)}</div><div class="lm">${esc((m.start_time || "").slice(0, 10))}</div></div>`).join("");
       $$(".li", side).forEach((x) => x.onclick = () => openMeetingModal(+x.dataset.m));
@@ -455,11 +470,12 @@
     const view = { x: 0, y: 0, k: 1 };
     const g = svgEl("g"); svg.appendChild(g);
     const gl = svgEl("g"); const gn = svgEl("g"); g.appendChild(gl); g.appendChild(gn);
-    const lines = E.map((e) => { const l = svgEl("line", { stroke: "#c3cbe0", "stroke-width": 0.6 + 3.4 * (e.w / maxW), "stroke-opacity": 0.55 }); gl.appendChild(l); return l; });
+    const lines = E.map((e) => { const l = svgEl("line", { stroke: "#cfcec9", "stroke-width": 0.6 + 3.4 * (e.w / maxW), "stroke-opacity": 0.55 }); gl.appendChild(l); return l; });
     const circles = N.map((n) => {
       const gg = svgEl("g", { class: "gnode" });
-      gg.appendChild(svgEl("circle", { r: n.r, fill: TCOLOR[n.type] || "#888", "fill-opacity": n.type === "部门" ? 0.95 : 0.85, stroke: "#fff", "stroke-width": 1.5 }));
-      const t = svgEl("text", { y: n.r + 12, "text-anchor": "middle", "font-size": n.type === "部门" ? 12.5 : 11, "font-weight": n.type === "部门" ? 600 : 400, fill: "#344054" });
+      if (n.type === "部门") gg.appendChild(svgEl("circle", { r: n.r + 6, fill: "#3a3a3c", "fill-opacity": 0.07 }));
+      gg.appendChild(shapeEl(n.type, n.r));
+      const t = svgEl("text", { y: n.r + 12, "text-anchor": "middle", "font-size": n.type === "部门" ? 12.5 : 11, "font-weight": n.type === "部门" ? 600 : 400, fill: "#3a3a3c" });
       t.textContent = n.name; gg.appendChild(t);
       const title = svgEl("title"); title.textContent = `${n.name}（${n.type}）· ${n.count} 场会`; gg.appendChild(title);
       gg.onmouseenter = () => hl(n); gg.onmouseleave = () => hl(null);
@@ -521,7 +537,7 @@
     const pos = {};
     d.folders.forEach((f, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / d.folders.length; pos[f.name] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a, r: 10 + 26 * Math.sqrt(f.count / maxC), f }; });
     const gl = svgEl("g"); const gn = svgEl("g"); svg.appendChild(gl); svg.appendChild(gn);
-    const col = (g) => g === "板块" ? "#2f5bea" : g === "上海食品" ? "#1d3f78" : "#0e9f6e";
+    const col = (g) => g === "板块" ? "#3a3a3c" : g === "上海食品" ? "#6e6e73" : "#a1a1a6";
     const side = $("#cside");
     const paths = d.links.map((l, i) => {
       const a = pos[l.s], b = pos[l.t]; if (!a || !b) return null;
@@ -531,12 +547,12 @@
       p.onmouseleave = () => p.setAttribute("stroke-opacity", 0.5);
       gl.appendChild(p); return p;
     });
-    const defs = svgEl("defs"); const lg = svgEl("linearGradient", { id: "lg" }); lg.appendChild(svgEl("stop", { offset: "0", "stop-color": "#2f5bea" })); lg.appendChild(svgEl("stop", { offset: "1", "stop-color": "#0891b2" })); defs.appendChild(lg); svg.insertBefore(defs, svg.firstChild);
+    const defs = svgEl("defs"); const lg = svgEl("linearGradient", { id: "lg" }); lg.appendChild(svgEl("stop", { offset: "0", "stop-color": "#8e8e93" })); lg.appendChild(svgEl("stop", { offset: "1", "stop-color": "#c7c7cc" })); defs.appendChild(lg); svg.insertBefore(defs, svg.firstChild);
     for (const p of Object.values(pos)) {
       const g = svgEl("g", { class: "gnode", transform: `translate(${p.x},${p.y})` });
       g.appendChild(svgEl("circle", { r: p.r, fill: col(p.f.group), "fill-opacity": 0.9, stroke: "#fff", "stroke-width": 2 }));
       const lx = Math.cos(p.a) * (p.r + 8), ly = Math.sin(p.a) * (p.r + 8);
-      const t = svgEl("text", { x: lx, y: ly + 4, "text-anchor": Math.abs(Math.cos(p.a)) < 0.3 ? "middle" : Math.cos(p.a) > 0 ? "start" : "end", "font-size": 13, "font-weight": 600, fill: "#101828" }); t.textContent = `${p.f.name} ${p.f.count}`; g.appendChild(t);
+      const t = svgEl("text", { x: lx, y: ly + 4, "text-anchor": Math.abs(Math.cos(p.a)) < 0.3 ? "middle" : Math.cos(p.a) > 0 ? "start" : "end", "font-size": 13, "font-weight": 600, fill: "#2a2a2c" }); t.textContent = `${p.f.name} ${p.f.count}`; g.appendChild(t);
       g.onclick = () => { side.innerHTML = `<div class="gs-h"><span class="dot" style="background:${col(p.f.group)}"></span>${esc(p.f.name)}<span class="muted">${p.f.count} 场</span></div><div class="muted" style="margin-bottom:6px">最常谈到</div><div class="tags">${p.f.top.map((t) => `<span class="tag biz">${esc(t)}</span>`).join("")}</div>`
         + `<div class="muted" style="margin:10px 0 6px">联系最紧的部门</div>` + d.links.filter((l) => l.s === p.f.name || l.t === p.f.name).slice(0, 5).map((l) => `<div class="li"><b>${esc(l.s === p.f.name ? l.t : l.s)}</b> · ${l.meetings} 场共同会议 · ${esc(l.top.slice(0, 3).join("、"))}</div>`).join(""); };
       gn.appendChild(g);
@@ -561,7 +577,7 @@
     const layers = d.series.map((s, k) => {
       const top = base.map((b, i) => [x(i), b]); const bot = base.map((b, i) => [x(i), b + s.values[i] * sc]);
       base = bot.map((p) => p[1]);
-      const path = svgEl("path", { d: smooth(top) + " L" + smooth(bot.slice().reverse()).slice(1) + " Z", fill: riverColor(k), "fill-opacity": 0.85, class: "rl" });
+      const path = svgEl("path", { d: smooth(top) + " L" + smooth(bot.slice().reverse()).slice(1) + " Z", fill: riverColor(k), "fill-opacity": 0.85, stroke: "#fff", "stroke-width": 1, class: "rl" });
       path.style.transformOrigin = `${W / 2}px ${H / 2}px`; path.style.animation = `grow .9s ease ${k * 0.07}s both`;
       path.onmousemove = (ev) => { const r = svg.getBoundingClientRect(); const i = Math.max(0, Math.min(n - 1, Math.round(((ev.clientX - r.left) * W / r.width - pad) / ((W - 2 * pad) / (n - 1))))); const tip = $("#rtip"); tip.hidden = false; tip.style.left = (ev.clientX - r.left + 12) + "px"; tip.style.top = (ev.clientY - r.top + 12) + "px"; tip.innerHTML = `<b>${esc(s.name)}</b><br>${d.weeks[i]} 那周：${s.values[i]} 场会提到`; layers.forEach((l) => l.setAttribute("fill-opacity", l === path ? 0.95 : 0.25)); };
       path.onmouseleave = () => { $("#rtip").hidden = true; layers.forEach((l) => l.setAttribute("fill-opacity", 0.85)); };
@@ -569,7 +585,7 @@
     });
     d.weeks.forEach((w, i) => { if (i % 2 === 0) { const t = svgEl("text", { x: x(i), y: H - 8, "text-anchor": "middle", "font-size": 11, fill: "#8b94a5" }); t.textContent = w; svg.appendChild(t); } });
   }
-  function riverColor(i) { return ["#2f5bea", "#0891b2", "#0e9f6e", "#c26b04", "#e0453a", "#7c3aed", "#db2777", "#64748b"][i % 8]; }
+  function riverColor(i) { return ["#3a3a3c", "#55555a", "#6e6e73", "#8e8e93", "#a1a1a6", "#b8b8bc", "#c7c7cc", "#dcdbd7"][i % 8]; }
 
   // ------------------------------------------------------------ 周报月报
   const REP = { cur: null };
@@ -581,13 +597,13 @@
     if (r.can_generate) h += `<div class="gen"><div class="muted" style="font-size:12px;margin:0 4px 6px">生成报告</div>
       <div class="gen-btns"><button class="btn sm" data-k="week" data-w="last">上周周报</button><button class="btn sm" data-k="week" data-w="current">本周至今</button>
       <button class="btn sm" data-k="month" data-w="last">上月月报</button><button class="btn sm" data-k="month" data-w="current">本月至今</button></div>
-      <div class="muted" id="repJob" style="font-size:12px;margin:6px 4px 0">${r.job.running ? "⏳ " + esc(r.job.detail) : r.job.error ? "⚠️ " + esc(r.job.error) : "每周一、每月 1 号早上自动生成"}</div></div>`;
+      <div class="muted" id="repJob" style="font-size:12px;margin:6px 4px 0">${r.job.running ? "生成中：" + esc(r.job.detail) : r.job.error ? "出错：" + esc(r.job.error) : "每周一、每月 1 号早上自动生成"}</div></div>`;
     const groups = { week: "周报", month: "月报" };
     for (const k of ["week", "month"]) {
       const items = r.items.filter((x) => x.kind === k);
       h += `<h4>${groups[k]}</h4>`;
       if (!items.length) h += `<div class="muted" style="padding:2px 10px 8px;font-size:12.5px">还没有</div>`;
-      for (const x of items) h += `<div class="node ${REP.cur === x.id ? "on" : ""}" data-id="${x.id}"><span class="ico">${k === "week" ? "🗓" : "📅"}</span><span>${esc(x.period_start.slice(5))} ~ ${esc(x.period_end.slice(5))}</span><span class="n">${r.scopes[x.scope] === "全公司版" ? "全公司" : "研发市场销售"}</span></div>`;
+      for (const x of items) h += `<div class="node ${REP.cur === x.id ? "on" : ""}" data-id="${x.id}"><span class="ico"></span><span>${esc(x.period_start.slice(5))} ~ ${esc(x.period_end.slice(5))}</span><span class="n">${r.scopes[x.scope] === "全公司版" ? "全公司" : "研发市场销售"}</span></div>`;
     }
     el.innerHTML = h;
     $$(".node", el).forEach((n) => n.onclick = () => openReport(+n.dataset.id));
@@ -597,7 +613,7 @@
     });
     if (r.job.running) setTimeout(() => { if (S.view === "reports") renderReports(); }, 5000);
     const first = REP.cur && r.items.find((x) => x.id === REP.cur) ? REP.cur : (r.items[0] && r.items[0].id);
-    if (first) openReport(first); else $("#repView").innerHTML = `<div class="empty-state"><div><div class="big">📊</div>还没有报告${r.can_generate ? "，点左上角生成一份试试" : ""}</div></div>`;
+    if (first) openReport(first); else $("#repView").innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>还没有报告${r.can_generate ? "，点左上角生成一份试试" : ""}</div></div>`;
   }
   async function openReport(id) {
     REP.cur = id;
@@ -829,9 +845,9 @@
     try {
       const r = await api("api/admin/asks" + (onlyBad ? "?bad=1" : ""));
       const st = r.stat || {};
-      el.innerHTML = `<div class="card"><h3>提问记录</h3><p class="desc">一共 ${st.n || 0} 个问题，👍 ${st.up || 0}，👎 ${st.down || 0}。被点 👎 的问题可以发给 Claude，用来改进检索和回答。</p>
-        <div style="margin-bottom:10px"><button class="btn sm ${onlyBad ? "" : "primary"}" id="aAll">全部</button> <button class="btn sm ${onlyBad ? "primary" : ""}" id="aBad">只看 👎</button></div>
-        <table class="grid"><tr><th style="width:150px">时间</th><th style="width:90px">人</th><th>问题</th><th style="width:60px">评价</th></tr>${r.items.map((a) => `<tr class="arow" data-id="${a.id}" style="cursor:pointer"><td class="muted">${esc(a.created_at)}</td><td>${esc(a.user_name)}</td><td>${esc(a.question)}${a.comment ? `<div class="muted" style="font-size:12px">反馈：${esc(a.comment)}</div>` : ""}<div class="ans" hidden><div class="md" style="margin-top:8px;font-size:13px">${md(a.answer || "")}</div></div></td><td>${a.rating === 1 ? "👍" : a.rating === -1 ? "👎" : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">暂无</td></tr>`}</table></div>`;
+      el.innerHTML = `<div class="card"><h3>提问记录</h3><p class="desc">一共 ${st.n || 0} 个问题，有用 ${st.up || 0}，没用 ${st.down || 0}。被点“没用”的问题可以发给 Claude，用来改进检索和回答。</p>
+        <div style="margin-bottom:10px"><button class="btn sm ${onlyBad ? "" : "primary"}" id="aAll">全部</button> <button class="btn sm ${onlyBad ? "primary" : ""}" id="aBad">只看“没用”</button></div>
+        <table class="grid"><tr><th style="width:150px">时间</th><th style="width:90px">人</th><th>问题</th><th style="width:60px">评价</th></tr>${r.items.map((a) => `<tr class="arow" data-id="${a.id}" style="cursor:pointer"><td class="muted">${esc(a.created_at)}</td><td>${esc(a.user_name)}</td><td>${esc(a.question)}${a.comment ? `<div class="muted" style="font-size:12px">反馈：${esc(a.comment)}</div>` : ""}<div class="ans" hidden><div class="md" style="margin-top:8px;font-size:13px">${md(a.answer || "")}</div></div></td><td>${a.rating === 1 ? "有用" : a.rating === -1 ? "没用" : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">暂无</td></tr>`}</table></div>`;
       $("#aAll").onclick = () => admAsks(false); $("#aBad").onclick = () => admAsks(true);
       $$(".arow").forEach((tr) => tr.onclick = () => { const a = $(".ans", tr); a.hidden = !a.hidden; });
     } catch (e) { el.textContent = e.message; }
