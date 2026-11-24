@@ -9,13 +9,13 @@ import threading
 from . import db
 
 SEED = [
-    ("均瑶健康", "君瑶健康,聚瑶健康,金瑶健康,俊瑶健康,菌瑶健康,均要健康,军药健康,军瑶健康,钧瑶健康,君药健康", "君瑶健康出现 438 次"),
+    ("均瑶健康", "君瑶健康,君耀健康,君耀,聚瑶健康,金瑶健康,俊瑶健康,菌瑶健康,均要健康,军药健康,军瑶健康,钧瑶健康,君药健康", "君瑶健康 438 次、君耀健康 355 次（用户确认是听错）"),
     ("均瑶集团", "君瑶集团,军药集团", "君瑶集团出现 136 次"),
     ("均瑶云商", "君瑶云商", ""),
     ("均瑶润盈", "君瑶润盈", ""),
     ("润盈", "润英,润营,润赢", ""),
     ("盒马", "河马,盒马鲜生,河马鲜生", "“河马”出现 725 次，基本都是盒马"),
-    ("味动力", "胃动力,卫动力", "“胃动力”出现 650 次；如果公司真有叫胃动力的产品，请删掉这一条"),
+    ("味动力", "胃动力,卫动力", "“胃动力”出现 650 次（用户确认是听错）"),
     ("每日博士", "美日博士,每日不是", "“美日博士”出现 166 次"),
     ("李子园", "李子源,李子元", ""),
     ("椰子水", "叶子水", ""),
@@ -28,7 +28,7 @@ SEED = [
     ("小象", "小象超市", ""),
     ("朴朴", "朴朴超市", ""),
 ]
-PENDING_NOTE = [("君耀健康", "君耀", "出现 355 次：不确定是“均瑶健康”听错，还是公司新名字/新品牌。确认是听错的话，把这一行的标准写法改成“均瑶健康”")]
+PENDING_NOTE: list[tuple[str, str, str]] = []
 
 _cache = {"groups": None}
 _lock = threading.Lock()
@@ -41,6 +41,40 @@ def seed():
         for canon, variants, note in SEED + PENDING_NOTE:
             c.execute("INSERT INTO synonym (canonical, variants, note, enabled) VALUES (?, ?, ?, 1)", (canon, variants, note))
     reset()
+
+
+def migrate_v2():
+    """用户 2026-11-24 确认：“君耀健康”是“均瑶健康”听错，“胃动力”是“味动力”听错。已上线的表按这个改一次，并把已抽取的名称统一"""
+    if db.q1("SELECT 1 FROM setting WHERE k = 'mig_syn_v2'"):
+        return
+    with db.tx() as c:
+        c.execute("DELETE FROM synonym WHERE canonical = '君耀健康'")
+        row = c.execute("SELECT id, variants FROM synonym WHERE canonical = '均瑶健康'").fetchone()
+        if row:
+            vs = _split(row["variants"])
+            for v in ("君耀健康", "君耀"):
+                if v not in vs:
+                    vs.append(v)
+            c.execute("UPDATE synonym SET variants = ?, note = ? WHERE id = ?", ("，".join(vs), "君瑶健康 438 次、君耀健康 355 次（用户确认是听错）", row["id"]))
+        c.execute("UPDATE synonym SET note = '“胃动力”出现 650 次（用户确认是听错）' WHERE canonical = '味动力'")
+        c.execute("INSERT INTO setting (k, v) VALUES ('mig_syn_v2', '1')")
+    reset()
+    normalize_facts()
+
+
+def normalize_facts():
+    """已抽取出来的客户/产品等名称，按当前同义词表统一成标准写法"""
+    m = {}
+    for g in groups():
+        for v in g["variants"]:
+            m[v] = g["canonical"]
+    if not m:
+        return 0
+    n = 0
+    with db.tx() as c:
+        for v, canon in m.items():
+            n += c.execute("UPDATE fact SET text = ? WHERE kind IN ('entity', 'topic') AND text = ?", (canon, v)).rowcount
+    return n
 
 
 def reset():
@@ -86,7 +120,7 @@ def list_all() -> list[dict]:
     return db.q("SELECT id, canonical, variants, note, enabled FROM synonym ORDER BY id")
 
 
-def save_all(rows: list[dict]):
+def save_all(rows: list[dict]):  # noqa: C901
     with db.tx() as c:
         c.execute("DELETE FROM synonym")
         for r in rows[:500]:
@@ -97,3 +131,4 @@ def save_all(rows: list[dict]):
             c.execute("INSERT INTO synonym (canonical, variants, note, enabled) VALUES (?, ?, ?, ?)",
                       (canon, variants, str(r.get("note") or "")[:200], 0 if r.get("enabled") is False else 1))
     reset()
+    normalize_facts()

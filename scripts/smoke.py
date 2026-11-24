@@ -230,7 +230,9 @@ def main():
     print("同义词 / 用量")
     from app import synonyms, llm as _llm
     synonyms.seed()
-    check("河马" in synonyms.expand("盒马") and synonyms.canonical("胃动力") == "味动力", "同义词表：盒马/河马、味动力/胃动力 当成一回事")
+    check("河马" in synonyms.expand("盒马") and synonyms.canonical("胃动力") == "味动力" and synonyms.canonical("君耀健康") == "均瑶健康", "同义词表：盒马/河马、味动力/胃动力、均瑶健康/君耀健康 当成一回事")
+    synonyms.migrate_v2()
+    check(not db.q1("SELECT 1 FROM synonym WHERE canonical = '君耀健康'"), "君耀健康 并入 均瑶健康")
     import app.main as _m
     with db.tx() as c:
         c.execute("UPDATE meeting SET summary = summary || ' 河马渠道' WHERE id = ?", (m_biz,))

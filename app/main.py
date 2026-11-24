@@ -620,6 +620,7 @@ async def lifespan(_app):
     if st.get("running"):
         ingest._set_state({**st, "running": False, "error": "服务重启，分类中断，请重新点“重新分类”"})
     synonyms.seed()
+    synonyms.migrate_v2()
     _migrate_subs_out_of_biz()
     try:
         n = chunks.backfill()
