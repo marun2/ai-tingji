@@ -109,7 +109,7 @@ def _material(data: dict) -> str:
                     lines.append(f"  {name}：" + "；".join(f"{f['label']} {f['value']}{f['unit']}（{f['text']}）" for f in items))
                 else:
                     lines.append(f"  {name}：" + "；".join(f["text"] for f in items))
-        ent = [f"{t}:{f['text']}" for f in fs if f["kind"] == "entity" and (t := terms.fix(f["label"], f["text"])) in ("客户", "竞品")]
+        ent = [f"{t}:{f['text']}" for f in fs if f["kind"] == "entity" and (t := terms.fix(f["label"], f["text"])) in ("客户", "平台", "竞品")]
         if ent:
             lines.append("  客户/竞品：" + "、".join(ent))
         out.append("\n".join(lines))

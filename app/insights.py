@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from . import access, db, rules, terms
 
 TZ = ZoneInfo("Asia/Shanghai")
-TYPES = ["客户", "产品", "竞品", "项目", "区域", "话题"]
+TYPES = ["客户", "平台", "产品", "竞品", "项目", "区域", "话题"]
 
 
 _NO_WORDS = ["面试", "候选人", "家庭教育", "育儿", "亲子", "家长会", "中考", "高考", "小升初", "升学", "保送", "私人"]

@@ -386,13 +386,14 @@
 
   // ------------------------------------------------------------ 洞察（可视化）
   // 洞察区用彩色（用户 2026-11-24 要求），外壳仍是灰白；类别同时靠颜色和形状区分
-  const TCOLOR = { 部门: "#4f63d9", 客户: "#16a3a0", 产品: "#ee8a2f", 竞品: "#e0505a", 项目: "#8b5cf6", 区域: "#3b9ae1", 话题: "#c9a01f" };
+  const TCOLOR = { 部门: "#4f63d9", 客户: "#16a3a0", 平台: "#d6458f", 产品: "#ee8a2f", 竞品: "#e0505a", 项目: "#8b5cf6", 区域: "#3b9ae1", 话题: "#c9a01f" };
   function shapeEl(type, r) {
     const c = TCOLOR[type] || "#8e8e93";
     if (type === "产品") return svgEl("rect", { x: -r * 0.85, y: -r * 0.85, width: r * 1.7, height: r * 1.7, rx: r * 0.35, fill: c, stroke: "#fff", "stroke-width": 1.5 });
     if (type === "竞品") return svgEl("rect", { x: -r * 0.75, y: -r * 0.75, width: r * 1.5, height: r * 1.5, transform: "rotate(45)", fill: "#fff", stroke: c, "stroke-width": 2 });
     if (type === "项目") return svgEl("rect", { x: -r * 0.8, y: -r * 0.8, width: r * 1.6, height: r * 1.6, rx: 2, fill: "#fff", stroke: c, "stroke-width": 2 });
     if (type === "客户") return svgEl("circle", { r, fill: "#fff", stroke: c, "stroke-width": 2 });
+    if (type === "平台") { const k = r * 1.05; return svgEl("polygon", { points: `0,${-k} ${k * 0.95},${k * 0.75} ${-k * 0.95},${k * 0.75}`, fill: c, stroke: "#fff", "stroke-width": 1.5, "stroke-linejoin": "round" }); }
     return svgEl("circle", { r, fill: c, stroke: "#fff", "stroke-width": 1.5 });
   }
   function shapeIcon(type) {
@@ -400,7 +401,7 @@
     s.appendChild(shapeEl(type, 5));
     return s.outerHTML;
   }
-  const INS = { tab: "cockpit", days: 90, types: ["客户", "产品", "竞品", "项目", "区域", "话题"], raf: null };
+  const INS = { tab: "cockpit", days: 90, types: ["客户", "平台", "产品", "竞品", "项目", "区域", "话题"], raf: null };
   const svgEl = (tag, attrs = {}) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
   function renderInsight() {
     cancelAnimationFrame(INS.raf);
@@ -449,7 +450,7 @@
       const side = $("#gside"); side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div><div class="muted">加载中…</div>`;
       const r = await api("api/insights/node?" + new URLSearchParams({ id: n.id, days: INS.days }));
       const fixBox = S.me.is_admin && n.type !== "部门" ? `<div class="tfix"><div class="tf-h">分错了？（只有管理员能看到）</div>
-          <div class="tf-row"><span>改成</span>${["客户", "产品", "竞品", "项目", "区域", "话题"].filter((t) => t !== n.type).map((t) => `<button class="btn sm" data-tt="${t}">${shapeIcon(t)}${t}</button>`).join("")}</div>
+          <div class="tf-row"><span>改成</span>${["客户", "平台", "产品", "竞品", "项目", "区域", "话题"].filter((t) => t !== n.type).map((t) => `<button class="btn sm" data-tt="${t}">${shapeIcon(t)}${t}</button>`).join("")}</div>
           <div class="tf-row"><span>并到</span><input id="tfInto" placeholder="另一个词的标准写法，如 味动力"><button class="btn sm" id="tfMerge">合并</button></div>
           <div class="tf-row"><button class="btn sm" id="tfHide">不在图谱和报告里显示</button></div></div>` : "";
       side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div>` +
@@ -608,7 +609,7 @@
     const bars = Object.entries(st.folders || {}).map(([k, v]) => `<div class="bar"><span class="bl">${esc(k)}</span><span class="bt"><i style="width:${v / fmax * 100}%"></i></span><span class="bv">${v}</span></div>`).join("");
     const topics = (st.topics || []).map(([t, n]) => `<span class="tag biz">${esc(t)} ${n}</span>`).join("");
     const ent = (st.entities || {});
-    const entHtml = ["客户", "竞品", "产品"].filter((k) => (ent[k] || []).length).map((k) => `<div class="ent"><b>${k}</b>${ent[k].map(([t, n]) => `<span class="tag">${esc(t)} ${n}</span>`).join("")}</div>`).join("");
+    const entHtml = ["客户", "平台", "竞品", "产品"].filter((k) => (ent[k] || []).length).map((k) => `<div class="ent"><b>${k}</b>${ent[k].map(([t, n]) => `<span class="tag">${esc(t)} ${n}</span>`).join("")}</div>`).join("");
     const body = md(r.content || "").replace(/\[M(\d+)\]/g, (m0, n) => r.refs[n] ? `<a class="cite" data-m="${n}" title="${esc(r.refs[n].title)} ${esc(r.refs[n].date)}">会</a>` : "");
     el.innerHTML = `<div class="doc report"><div class="rep-head"><div><h1 class="dt">${esc(r.title)}</h1><div class="muted" style="font-size:12.5px">生成于 ${esc(r.created_at)} · ${esc(r.created_by || "")}</div></div></div>
       <div class="rep-cards"><div class="kpi"><div class="kn">${st.meetings || 0}</div><div class="kl">场会议</div></div>
@@ -724,7 +725,7 @@
       <div class="card"><h3>大模型用量</h3><p class="desc">按月统计分类、抽取、提问、写报告消耗的字数（tokens）。设个每月额度，超过 80% 会在这里和管理页顶部提醒。价格填了就能估算花费（按你中转站的价格，每百万 tokens 多少元）。</p>
       <div id="useBox" class="muted">加载中…</div></div>
       <div class="card"><h3>会议信息抽取</h3>
-      <p class="desc">用大模型从每场会的摘要里整理出<b>决议、风险问题、关键数字、客户 / 产品 / 竞品 / 项目 / 区域、话题</b>，周报月报和可视化都靠它。新导入的会议会自动抽；第一次全部抽一遍大约一两个小时，会消耗大模型用量。</p>
+      <p class="desc">用大模型从每场会的摘要里整理出<b>决议、风险问题、关键数字、客户 / 平台 / 产品 / 竞品 / 项目 / 区域、话题</b>，周报月报和可视化都靠它。新导入的会议会自动抽；第一次全部抽一遍大约一两个小时，会消耗大模型用量。</p>
       <div id="exState" class="muted" style="margin-bottom:10px">加载中…</div>
       <button class="btn primary" id="exGo">补全抽取</button> <button class="btn" id="exRedo">全部重抽</button></div>
       <div class="card"><h3>子公司的会是否也放进「研发市场销售」</h3>

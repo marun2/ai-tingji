@@ -198,7 +198,7 @@ def main():
     synonyms.seed(); synonyms.migrate_v2(); synonyms.migrate_v3(); terms.seed()
     m_int = db.q1("SELECT id FROM meeting WHERE title LIKE ?", ("%拼多多运营%",))["id"]
     extract._save(m_biz, {"decisions": ["12月15日前完成85%回款"], "risks": ["长沙断货"], "metrics": [{"name": "回款", "value": "85", "unit": "%", "context": "12月15日前"}],
-                          "entities": {"客户": ["盒马鲜生", "叮咚", "经销商"], "产品": ["每日博士", "微动力", "饮料"], "竞品": ["李子园"], "区域": ["豫鲁三区"]}, "topics": ["春节备货"]})
+                          "entities": {"客户": ["盒马鲜生", "叮咚", "经销商", "京东"], "产品": ["每日博士", "微动力", "饮料"], "竞品": ["李子园"], "区域": ["豫鲁三区"]}, "topics": ["春节备货"]})
     extract._save(m_int, {"decisions": [], "risks": ["候选人期望薪资高"], "metrics": [], "entities": {"客户": ["拼多多"]}, "topics": ["招聘"]})
     check(db.q1("SELECT text FROM fact WHERE meeting_id = ? AND kind = 'entity' AND label = '客户' ORDER BY id LIMIT 1", (m_biz,))["text"] == "盒马",
           "抽取结果入库，名称统一（盒马鲜生 → 盒马）")
@@ -213,6 +213,7 @@ def main():
     print("关键词修正")
     check(("客户", "经销商") not in bn, "太笼统的词（经销商）默认不显示")
     check(("产品", "每日博士") not in bn, "和子公司同名的词不当成产品")
+    check(("平台", "京东") in bn and ("客户", "京东") not in bn and ("客户", "盒马") in bn, "京东等电商平台单独算“平台”，盒马仍是客户")
     check(("产品", "味动力") in bn and ("产品", "微动力") not in bn, "“微动力”统一成“味动力”")
     terms.set_rule("饮料", "type", "话题")
     bn = {(n["type"], n["name"]) for n in insights.graph(board, days=730)["nodes"]}
