@@ -15,7 +15,7 @@ SEED = [
     ("均瑶润盈", "君瑶润盈", ""),
     ("润盈", "润英,润营,润赢", ""),
     ("盒马", "河马,盒马鲜生,河马鲜生", "“河马”出现 725 次，基本都是盒马"),
-    ("味动力", "胃动力,卫动力", "“胃动力”出现 650 次（用户确认是听错）"),
+    ("味动力", "胃动力,卫动力,微动力", "“胃动力”出现 650 次（用户确认是听错）"),
     ("每日博士", "美日博士,每日不是", "“美日博士”出现 166 次"),
     ("李子园", "李子源,李子元", ""),
     ("椰子水", "叶子水", ""),
@@ -58,6 +58,19 @@ def migrate_v2():
             c.execute("UPDATE synonym SET variants = ?, note = ? WHERE id = ?", ("，".join(vs), "君瑶健康 438 次、君耀健康 355 次（用户确认是听错）", row["id"]))
         c.execute("UPDATE synonym SET note = '“胃动力”出现 650 次（用户确认是听错）' WHERE canonical = '味动力'")
         c.execute("INSERT INTO setting (k, v) VALUES ('mig_syn_v2', '1')")
+    reset()
+    normalize_facts()
+
+
+def migrate_v3():
+    """2026-11-24 图谱里看到“微动力”单独成了一个产品，也是“味动力”听错，补进去"""
+    if db.q1("SELECT 1 FROM setting WHERE k = 'mig_syn_v3'"):
+        return
+    with db.tx() as c:
+        row = c.execute("SELECT id, variants FROM synonym WHERE canonical = '味动力'").fetchone()
+        if row and "微动力" not in _split(row["variants"]):
+            c.execute("UPDATE synonym SET variants = ? WHERE id = ?", ("，".join(_split(row["variants"]) + ["微动力"]), row["id"]))
+        c.execute("INSERT INTO setting (k, v) VALUES ('mig_syn_v3', '1')")
     reset()
     normalize_facts()
 

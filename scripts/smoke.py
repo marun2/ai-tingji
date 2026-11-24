@@ -194,10 +194,11 @@ def main():
     check(not any("面试" in x for x in names), "部门负责人导出的研发市场销售里没有面试")
 
     print("抽取 / 报告 / 可视化（不调大模型，直接写入抽取结果）")
-    from app import extract, insights, reports
+    from app import extract, insights, reports, synonyms, terms
+    synonyms.seed(); synonyms.migrate_v2(); synonyms.migrate_v3(); terms.seed()
     m_int = db.q1("SELECT id FROM meeting WHERE title LIKE ?", ("%拼多多运营%",))["id"]
     extract._save(m_biz, {"decisions": ["12月15日前完成85%回款"], "risks": ["长沙断货"], "metrics": [{"name": "回款", "value": "85", "unit": "%", "context": "12月15日前"}],
-                          "entities": {"客户": ["盒马鲜生", "叮咚"], "竞品": ["李子园"], "区域": ["豫鲁三区"]}, "topics": ["春节备货"]})
+                          "entities": {"客户": ["盒马鲜生", "叮咚", "经销商"], "产品": ["每日博士", "微动力", "饮料"], "竞品": ["李子园"], "区域": ["豫鲁三区"]}, "topics": ["春节备货"]})
     extract._save(m_int, {"decisions": [], "risks": ["候选人期望薪资高"], "metrics": [], "entities": {"客户": ["拼多多"]}, "topics": ["招聘"]})
     check(db.q1("SELECT text FROM fact WHERE meeting_id = ? AND kind = 'entity' AND label = '客户' ORDER BY id LIMIT 1", (m_biz,))["text"] == "盒马",
           "抽取结果入库，名称统一（盒马鲜生 → 盒马）")
@@ -207,7 +208,22 @@ def main():
     names = {n["name"] for n in g_lead["nodes"]}
     check("盒马" in names and "招聘" not in names and "拼多多" not in names, "部门负责人的知识图谱里没有面试会里的内容")
     g_board = insights.graph(board, days=730)
-    check("招聘" in {n["name"] for n in g_board["nodes"]}, "董事局的知识图谱包含全部")
+    bn = {(n["type"], n["name"]) for n in g_board["nodes"]}
+    check(("话题", "招聘") not in bn and ("话题", "春节备货") in bn, "面试会议不进洞察（董事局也一样，知识库里照样能看）")
+    print("关键词修正")
+    check(("客户", "经销商") not in bn, "太笼统的词（经销商）默认不显示")
+    check(("产品", "每日博士") not in bn, "和子公司同名的词不当成产品")
+    check(("产品", "味动力") in bn and ("产品", "微动力") not in bn, "“微动力”统一成“味动力”")
+    terms.set_rule("饮料", "type", "话题")
+    bn = {(n["type"], n["name"]) for n in insights.graph(board, days=730)["nodes"]}
+    check(("话题", "饮料") in bn and ("产品", "饮料") not in bn, "管理员把“饮料”改成话题后，图谱跟着变")
+    terms.set_rule("饮料", "hide")
+    check("饮料" not in {n["name"] for n in insights.graph(board, days=730)["nodes"]}, "设为不显示后图谱里没有了")
+    terms.set_rule("饮料", "clear")
+    check(("产品", "饮料") in {(n["type"], n["name"]) for n in insights.graph(board, days=730)["nodes"]}, "撤销后恢复原样")
+    terms.merge("叮咚", "叮咚买菜")
+    check(db.q1("SELECT 1 FROM fact WHERE meeting_id = ? AND text = '叮咚买菜'", (m_biz,)) is not None and synonyms.canonical("叮咚") == "叮咚买菜", "在图谱里合并两个词，已抽取的名称跟着统一")
+    terms.merge("叮咚买菜", "叮咚")
     check(isinstance(insights.collab(board, days=730)["folders"], list) and isinstance(insights.river(board)["series"], list), "部门协作、话题河流能出数据")
     ck = insights.cockpit(lead)
     check(all("拼多多" not in (r["title"] or "") for r in ck["risks"]), "部门负责人的驾驶舱看不到面试里的风险")

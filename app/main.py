@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from urllib.parse import quote
 
-from . import access, chunks, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms
+from . import access, chunks, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -569,6 +569,29 @@ async def syn_put(req):
     return ok({"items": await run(synonyms.list_all)})
 
 
+async def terms_get(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    return ok({"items": await run(terms.list_all), "types": terms.TYPES})
+
+
+async def terms_post(req):
+    """图谱里改关键词：action = type（改类别）/ hide（不显示）/ clear（撤销）/ merge（并到另一个词）"""
+    u = await run(user, req)
+    access.require_admin(u)
+    b = await body(req)
+    name, action, target = str(b.get("name") or ""), str(b.get("action") or ""), str(b.get("target") or "")
+    try:
+        if action == "merge":
+            await run(terms.merge, name, target)
+        else:
+            await run(terms.set_rule, name, action, target)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(u, "关键词修正", f"{name} {action} {target}".strip())
+    return ok({"items": await run(terms.list_all)})
+
+
 async def usage_get(req):
     u = await run(user, req)
     access.require_admin(u)
@@ -621,6 +644,8 @@ async def lifespan(_app):
         ingest._set_state({**st, "running": False, "error": "服务重启，分类中断，请重新点“重新分类”"})
     synonyms.seed()
     synonyms.migrate_v2()
+    synonyms.migrate_v3()
+    terms.seed()
     _migrate_subs_out_of_biz()
     try:
         n = chunks.backfill()
@@ -668,6 +693,8 @@ routes = [
     Route("/api/reports/{id:int}", report_get),
     Route("/api/admin/synonyms", syn_get),
     Route("/api/admin/synonyms", syn_put, methods=["PUT"]),
+    Route("/api/admin/terms", terms_get),
+    Route("/api/admin/terms", terms_post, methods=["POST"]),
     Route("/api/admin/usage", usage_get),
     Route("/api/admin/usage", usage_put, methods=["PUT"]),
     Route("/api/admin/extract", extract_state),

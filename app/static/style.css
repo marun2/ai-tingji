@@ -223,7 +223,7 @@ select.role { border: 1px solid var(--line-strong); border-radius: 6px; padding:
 .lg.off { opacity: .4; }
 .ins-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 22px 22px; }
 .graph-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 14px; height: 100%; min-height: 520px; }
-.graph-wrap svg { width: 100%; height: 100%; min-height: 520px; background: radial-gradient(circle at 50% 45%, #ffffff 0%, #f1f4fb 70%); border: 1px solid var(--line); border-radius: 16px; cursor: grab; }
+.graph-wrap > svg { width: 100%; height: 100%; min-height: 520px; background: radial-gradient(circle at 50% 45%, #ffffff 0%, #f1f4fb 70%); border: 1px solid var(--line); border-radius: 16px; cursor: grab; }
 .gnode { cursor: pointer; transition: opacity .2s; }
 .gnode:hover circle { stroke: #101828; }
 .gside { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; overflow: auto; font-size: 13px; }
@@ -357,7 +357,7 @@ select.role, .form-row input { border-color: var(--line-strong); border-radius: 
 .ins-bar .subnav { margin: 0; }
 .lg { background: #fafaf9; border-color: var(--line); color: var(--text-2); }
 .lg svg { flex: none; }
-.graph-wrap svg { background: #fbfbfa; background-image: radial-gradient(#e6e5e1 1px, transparent 1px); background-size: 20px 20px; border-color: var(--line); }
+.graph-wrap > svg { background: #fbfbfa; background-image: radial-gradient(#e6e5e1 1px, transparent 1px); background-size: 20px 20px; border-color: var(--line); }
 .gside, .river-wrap { border-color: var(--line); }
 .gnode:hover circle, .gnode:hover rect { stroke: #2a2a2c; }
 .cockpit .kpi { background: #f8f8f7; color: var(--text); box-shadow: none; border: 0; border-radius: 12px; }
@@ -380,3 +380,11 @@ select.role, .form-row input { border-color: var(--line-strong); border-radius: 
   .me { display: none; }
   .panel { min-height: calc(100vh - 120px); }
 }
+
+/* 图谱侧栏：管理员改关键词类别 */
+.tfix { background: #f8f8f7; border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-size: 12.5px; }
+.tfix .tf-h { color: var(--text-3); margin-bottom: 6px; }
+.tf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.tf-row > span { color: var(--text-3); }
+.tf-row .btn.sm { display: inline-flex; align-items: center; gap: 4px; }
+.tf-row input { flex: 1; min-width: 120px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; background: #fff; }

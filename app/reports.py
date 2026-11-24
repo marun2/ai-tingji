@@ -13,7 +13,7 @@ import threading
 import time
 from zoneinfo import ZoneInfo
 
-from . import access, db, llm, rules
+from . import access, db, llm, rules, terms
 
 TZ = ZoneInfo("Asia/Shanghai")
 _lock = threading.Lock()
@@ -77,12 +77,16 @@ def collect(scope: str, start: str, end: str) -> dict:
             folders[r["folder"]] += 1
         for m in ms:
             m["folders"] = fm.get(m["id"], [])
-    topics = collections.Counter(f["text"] for fs in facts.values() for f in fs if f["kind"] == "topic")
+    topics = collections.Counter()
     ents = collections.defaultdict(collections.Counter)
-    for fs in facts.values():
+    for fs in facts.values():   # 套用管理员的关键词修正（改类别 / 不显示）
         for f in fs:
-            if f["kind"] == "entity":
-                ents[f["label"]][f["text"]] += 1
+            if f["kind"] in ("entity", "topic"):
+                typ = terms.fix(f["label"] if f["kind"] == "entity" else "话题", f["text"])
+                if typ == "话题":
+                    topics[f["text"]] += 1
+                elif typ:
+                    ents[typ][f["text"]] += 1
     if scope == "biz":
         folders = collections.Counter({rules.BIZ: len(ms)})
     stats = {"meetings": len(ms), "extracted": sum(1 for m in ms if m["extracted_at"]), "folders": dict(folders.most_common()),
@@ -105,7 +109,7 @@ def _material(data: dict) -> str:
                     lines.append(f"  {name}：" + "；".join(f"{f['label']} {f['value']}{f['unit']}（{f['text']}）" for f in items))
                 else:
                     lines.append(f"  {name}：" + "；".join(f["text"] for f in items))
-        ent = [f"{f['label']}:{f['text']}" for f in fs if f["kind"] == "entity" and f["label"] in ("客户", "竞品")]
+        ent = [f"{t}:{f['text']}" for f in fs if f["kind"] == "entity" and (t := terms.fix(f["label"], f["text"])) in ("客户", "竞品")]
         if ent:
             lines.append("  客户/竞品：" + "、".join(ent))
         out.append("\n".join(lines))

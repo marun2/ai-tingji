@@ -138,6 +138,15 @@ CREATE TABLE IF NOT EXISTS synonym (
   enabled INTEGER DEFAULT 1
 );
 
+-- 关键词修正（图谱、报告里把抽错类别的词改过来，或不显示）：name 是标准写法
+CREATE TABLE IF NOT EXISTS term_rule (
+  name TEXT PRIMARY KEY,
+  action TEXT NOT NULL,            -- type：改类别（target=客户/产品/竞品/项目/区域/话题）；hide：不显示
+  target TEXT,
+  note TEXT,
+  updated_at TEXT
+);
+
 -- 大模型用量（按天、按用途）
 CREATE TABLE IF NOT EXISTS llm_usage (
   day TEXT NOT NULL,

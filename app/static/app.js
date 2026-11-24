@@ -448,10 +448,20 @@
     forceGraph($("#gsvg"), d.nodes, d.edges, async (n) => {
       const side = $("#gside"); side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div><div class="muted">加载中…</div>`;
       const r = await api("api/insights/node?" + new URLSearchParams({ id: n.id, days: INS.days }));
+      const fixBox = S.me.is_admin && n.type !== "部门" ? `<div class="tfix"><div class="tf-h">分错了？（只有管理员能看到）</div>
+          <div class="tf-row"><span>改成</span>${["客户", "产品", "竞品", "项目", "区域", "话题"].filter((t) => t !== n.type).map((t) => `<button class="btn sm" data-tt="${t}">${shapeIcon(t)}${t}</button>`).join("")}</div>
+          <div class="tf-row"><span>并到</span><input id="tfInto" placeholder="另一个词的标准写法，如 味动力"><button class="btn sm" id="tfMerge">合并</button></div>
+          <div class="tf-row"><button class="btn sm" id="tfHide">不在图谱和报告里显示</button></div></div>` : "";
       side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div>` +
-        `<button class="btn sm" id="gAsk" style="margin:4px 0 10px">问问关于「${esc(n.name)}」</button>` +
+        `<button class="btn sm" id="gAsk" style="margin:4px 0 10px">问问关于「${esc(n.name)}」</button>` + fixBox +
         r.items.map((m) => `<div class="li" data-m="${m.id}"><div>${esc(m.title)}</div><div class="lm">${esc((m.start_time || "").slice(0, 10))}</div></div>`).join("");
       $$(".li", side).forEach((x) => x.onclick = () => openMeetingModal(+x.dataset.m));
+      const fixTerm = async (action, target, msg) => { try { await api("api/admin/terms", { method: "POST", json: { name: n.name, action, target } }); toast(msg + "，可在「管理 → 关键词」撤销"); insGraph(); } catch (e) { toast(e.message, true); } };
+      $$("[data-tt]", side).forEach((b) => b.onclick = () => fixTerm("type", b.dataset.tt, `「${n.name}」改成${b.dataset.tt}`));
+      if ($("#tfHide")) {
+        $("#tfHide").onclick = () => fixTerm("hide", "", `「${n.name}」不再显示`);
+        $("#tfMerge").onclick = () => { const t = $("#tfInto").value.trim(); if (!t) return toast("先填要并到哪个词", true); fixTerm("merge", t, `「${n.name}」已并到「${t}」`); };
+      }
       $("#gAsk").onclick = () => { go("ask"); setTimeout(() => sendAsk(`最近会议里关于「${n.name}」都讨论了什么？有哪些决定和问题？`), 50); };
     });
   }
@@ -613,11 +623,11 @@
   let pollTimer = null;
   function renderAdmin() {
     clearTimeout(pollTimer);
-    const tabs = [["import", "导入听记"], ["members", "人员权限"], ["model", "模型与检索"], ["synonyms", "同义词"], ["asks", "提问记录"], ["audit", "操作记录"]];
+    const tabs = [["import", "导入听记"], ["members", "人员权限"], ["model", "模型与检索"], ["synonyms", "同义词"], ["terms", "关键词"], ["asks", "提问记录"], ["audit", "操作记录"]];
     api("api/admin/usage").then((u) => { const b = $("#useBanner"); if (b && (u.over || u.near)) { b.hidden = false; b.innerHTML = `大模型用量${u.over ? "已超出" : "快到"}本月额度（${fmtTok(u.total_in + u.total_out)} / ${fmtTok(u.budget_tokens)}），在「模型与检索」里查看。`; } }).catch(() => {});
     app.innerHTML = `<div class="admin"><div class="admin-inner"><div id="useBanner" class="notice warn" hidden></div><div class="subnav">${tabs.map(([k, n]) => `<button data-k="${k}" class="${S.adminTab === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="adm"></div></div></div>`;
     $$(".subnav button").forEach((b) => b.onclick = () => { S.adminTab = b.dataset.k; renderAdmin(); });
-    ({ import: admImport, members: admMembers, model: admModel, synonyms: admSyn, asks: admAsks, audit: admAudit })[S.adminTab]();
+    ({ import: admImport, members: admMembers, model: admModel, synonyms: admSyn, terms: admTerms, asks: admAsks, audit: admAudit })[S.adminTab]();
   }
 
   async function admImport() {
@@ -786,6 +796,18 @@
       $("#synSave").onclick = async () => { try { await api("api/admin/synonyms", { method: "PUT", json: { items: rows } }); toast("已保存，搜索和提问马上生效"); admSyn(); } catch (e) { toast(e.message, true); } };
     };
     draw();
+  }
+  async function admTerms() {
+    const el = $("#adm");
+    let r; try { r = await api("api/admin/terms"); } catch (e) { el.textContent = e.message; return; }
+    const act = (x) => x.action === "hide" ? `<span class="tag">不显示</span>` : `<span class="tag biz">改成 ${esc(x.target)}</span>`;
+    el.innerHTML = `<div class="card"><h3>关键词修正</h3><p class="desc">会议里的客户、产品、竞品等是大模型自动抽出来的，偶尔会分错类别，或者抽出“经销商”“全国”这种太笼统的词。<br>在<b>洞察 → 知识图谱</b>里点一个词，就能改类别、并到另一个词或不显示；改过的都列在这里，可以撤销。只影响图谱、驾驶舱和周报月报的显示，不改会议本身。<br>另外：和部门、子公司同名的词（如 每日博士）自动只当部门显示；面试和私人内容（子女教育讲座等）的会不进洞察，人事的其他会照常算。</p>
+      <div class="tf-row" style="margin:6px 0 12px"><input id="tnName" placeholder="关键词，如 经销商" style="width:180px"><select id="tnAct"><option value="hide">不显示</option>${r.types.map((t) => `<option value="type:${t}">改成 ${t}</option>`).join("")}</select><button class="btn sm" id="tnAdd">添加</button></div>
+      ${r.items.length ? `<table class="grid"><tr><th style="width:160px">关键词</th><th style="width:130px">处理</th><th>原来抽成</th><th style="width:150px">备注</th><th style="width:70px"></th></tr>
+      ${r.items.map((x) => `<tr><td>${esc(x.name)}</td><td>${act(x)}</td><td class="muted">${esc(x.original)}</td><td class="muted">${esc(x.note || "")}</td><td><button class="btn sm" data-clr="${esc(x.name)}">撤销</button></td></tr>`).join("")}</table>` : `<div class="muted">还没有修正过</div>`}</div>`;
+    const post = async (json, msg) => { try { await api("api/admin/terms", { method: "POST", json }); toast(msg); admTerms(); } catch (e) { toast(e.message, true); } };
+    $$("[data-clr]", el).forEach((b) => b.onclick = () => post({ name: b.dataset.clr, action: "clear" }, "已撤销"));
+    $("#tnAdd").onclick = () => { const name = $("#tnName").value.trim(); if (!name) return toast("先填关键词", true); const [a, t] = $("#tnAct").value.split(":"); post({ name, action: a, target: t || "" }, "已添加"); };
   }
   let exTimer = null;
   async function pollEx() {
