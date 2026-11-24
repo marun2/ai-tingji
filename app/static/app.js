@@ -385,8 +385,8 @@
 
 
   // ------------------------------------------------------------ 洞察（可视化）
-  // 灰白主题：类别靠形状区分（实心圆=部门、空心圆=客户、方块=产品、菱形=竞品、空心方=项目、中灰圆=区域、浅灰圆=话题）
-  const TCOLOR = { 部门: "#3a3a3c", 客户: "#6e6e73", 产品: "#6e6e73", 竞品: "#55555a", 项目: "#8e8e93", 区域: "#a1a1a6", 话题: "#c7c7cc" };
+  // 洞察区用彩色（用户 2026-11-24 要求），外壳仍是灰白；类别同时靠颜色和形状区分
+  const TCOLOR = { 部门: "#4f63d9", 客户: "#16a3a0", 产品: "#ee8a2f", 竞品: "#e0505a", 项目: "#8b5cf6", 区域: "#3b9ae1", 话题: "#c9a01f" };
   function shapeEl(type, r) {
     const c = TCOLOR[type] || "#8e8e93";
     if (type === "产品") return svgEl("rect", { x: -r * 0.85, y: -r * 0.85, width: r * 1.7, height: r * 1.7, rx: r * 0.35, fill: c, stroke: "#fff", "stroke-width": 1.5 });
@@ -400,14 +400,14 @@
     s.appendChild(shapeEl(type, 5));
     return s.outerHTML;
   }
-  const INS = { tab: "cockpit", days: 90, types: ["客户", "产品", "竞品", "项目", "区域", "话题"], riverKind: "话题", raf: null };
+  const INS = { tab: "cockpit", days: 90, types: ["客户", "产品", "竞品", "项目", "区域", "话题"], raf: null };
   const svgEl = (tag, attrs = {}) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
   function renderInsight() {
     cancelAnimationFrame(INS.raf);
-    const tabs = [["cockpit", "经营驾驶舱"], ["graph", "知识图谱"], ["collab", "部门协作"], ["river", "话题河流"]];
+    const tabs = [["cockpit", "经营驾驶舱"], ["graph", "知识图谱"], ["collab", "部门协作"]];
     app.innerHTML = `<div class="ins"><div class="ins-bar"><div class="subnav">${tabs.map(([k, n]) => `<button data-k="${k}" class="${INS.tab === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="insOpts" class="ins-opts"></div></div><div id="insBody" class="ins-body"></div></div>`;
     $$(".ins-bar .subnav button").forEach((b) => b.onclick = () => { INS.tab = b.dataset.k; renderInsight(); });
-    ({ cockpit: insCockpit, graph: insGraph, collab: insCollab, river: insRiver })[INS.tab]();
+    ({ cockpit: insCockpit, graph: insGraph, collab: insCollab })[INS.tab]();
   }
   const daysSel = () => `<select id="insDays">${[[30, "近 30 天"], [90, "近 90 天"], [180, "近半年"], [365, "近一年"]].map(([d, n]) => `<option value="${d}" ${INS.days === d ? "selected" : ""}>${n}</option>`).join("")}</select>`;
   function bindDays(fn) { const d = $("#insDays"); if (d) d.onchange = () => { INS.days = +d.value; fn(); }; }
@@ -419,7 +419,7 @@
     let d; try { d = await api("api/insights/cockpit"); } catch (e) { el.innerHTML = emptyIns(esc(e.message)); return; }
     const mx = Math.max(1, ...d.trend);
     const W = 560, H = 150, bw = W / d.trend.length;
-    const bars = d.trend.map((v, i) => `<rect x="${i * bw + 6}" y="${H - 20 - (v / mx) * (H - 40)}" width="${bw - 12}" height="${(v / mx) * (H - 40)}" rx="4" fill="${i === d.trend.length - 1 ? "#6e6e73" : "#dcdbd7"}"><title>${d.trend_labels[i]} 那周：${v} 场</title></rect><text x="${i * bw + bw / 2}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#8b94a5">${d.trend_labels[i]}</text>${v ? `<text x="${i * bw + bw / 2}" y="${H - 24 - (v / mx) * (H - 40)}" text-anchor="middle" font-size="10" fill="#4f596b">${v}</text>` : ""}`).join("");
+    const bars = d.trend.map((v, i) => `<rect x="${i * bw + 6}" y="${H - 20 - (v / mx) * (H - 40)}" width="${bw - 12}" height="${(v / mx) * (H - 40)}" rx="4" fill="${i === d.trend.length - 1 ? "#4f63d9" : "#c3ccf4"}"><title>${d.trend_labels[i]} 那周：${v} 场</title></rect><text x="${i * bw + bw / 2}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#8b94a5">${d.trend_labels[i]}</text>${v ? `<text x="${i * bw + bw / 2}" y="${H - 24 - (v / mx) * (H - 40)}" text-anchor="middle" font-size="10" fill="#4f596b">${v}</text>` : ""}`).join("");
     const delta = d.this_week - d.last_week;
     const list = (items, fmt) => items.length ? items.map((x) => `<div class="li" data-m="${x.meeting_id}">${fmt(x)}<div class="lm">${esc((x.start_time || "").slice(5, 10))} · ${esc(x.title)}</div></div>`).join("") : `<div class="muted">近两周暂无</div>`;
     el.innerHTML = `<div class="cockpit">
@@ -470,7 +470,7 @@
     const view = { x: 0, y: 0, k: 1 };
     const g = svgEl("g"); svg.appendChild(g);
     const gl = svgEl("g"); const gn = svgEl("g"); g.appendChild(gl); g.appendChild(gn);
-    const lines = E.map((e) => { const l = svgEl("line", { stroke: "#cfcec9", "stroke-width": 0.6 + 3.4 * (e.w / maxW), "stroke-opacity": 0.55 }); gl.appendChild(l); return l; });
+    const lines = E.map((e) => { const l = svgEl("line", { stroke: "#c9cfe3", "stroke-width": 0.6 + 3.4 * (e.w / maxW), "stroke-opacity": 0.55 }); gl.appendChild(l); return l; });
     const circles = N.map((n) => {
       const gg = svgEl("g", { class: "gnode" });
       if (n.type === "部门") gg.appendChild(svgEl("circle", { r: n.r + 6, fill: "#3a3a3c", "fill-opacity": 0.07 }));
@@ -537,7 +537,7 @@
     const pos = {};
     d.folders.forEach((f, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / d.folders.length; pos[f.name] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a, r: 10 + 26 * Math.sqrt(f.count / maxC), f }; });
     const gl = svgEl("g"); const gn = svgEl("g"); svg.appendChild(gl); svg.appendChild(gn);
-    const col = (g) => g === "板块" ? "#3a3a3c" : g === "上海食品" ? "#6e6e73" : "#a1a1a6";
+    const col = (g) => g === "板块" ? "#4f63d9" : g === "上海食品" ? "#16a3a0" : "#ee8a2f";
     const side = $("#cside");
     const paths = d.links.map((l, i) => {
       const a = pos[l.s], b = pos[l.t]; if (!a || !b) return null;
@@ -547,7 +547,7 @@
       p.onmouseleave = () => p.setAttribute("stroke-opacity", 0.5);
       gl.appendChild(p); return p;
     });
-    const defs = svgEl("defs"); const lg = svgEl("linearGradient", { id: "lg" }); lg.appendChild(svgEl("stop", { offset: "0", "stop-color": "#8e8e93" })); lg.appendChild(svgEl("stop", { offset: "1", "stop-color": "#c7c7cc" })); defs.appendChild(lg); svg.insertBefore(defs, svg.firstChild);
+    const defs = svgEl("defs"); const lg = svgEl("linearGradient", { id: "lg" }); lg.appendChild(svgEl("stop", { offset: "0", "stop-color": "#7c8ce8" })); lg.appendChild(svgEl("stop", { offset: "1", "stop-color": "#5cc7c2" })); defs.appendChild(lg); svg.insertBefore(defs, svg.firstChild);
     for (const p of Object.values(pos)) {
       const g = svgEl("g", { class: "gnode", transform: `translate(${p.x},${p.y})` });
       g.appendChild(svgEl("circle", { r: p.r, fill: col(p.f.group), "fill-opacity": 0.9, stroke: "#fff", "stroke-width": 2 }));
@@ -559,33 +559,6 @@
     }
     requestAnimationFrame(() => paths.forEach((p) => p && (p.style.strokeDashoffset = "0")));
   }
-
-  async function insRiver() {
-    $("#insOpts").innerHTML = `<select id="rk">${["话题", "客户", "产品", "竞品", "项目", "区域"].map((k) => `<option ${INS.riverKind === k ? "selected" : ""}>${k}</option>`).join("")}</select>`;
-    $("#rk").onchange = (e) => { INS.riverKind = e.target.value; insRiver(); };
-    const el = $("#insBody"); el.innerHTML = emptyIns("加载中…");
-    let d; try { d = await api("api/insights/river?" + new URLSearchParams({ weeks: 16, kind: INS.riverKind })); } catch (e) { el.innerHTML = emptyIns(esc(e.message)); return; }
-    if (!d.series.length) { el.innerHTML = emptyIns("还没有数据：需要先完成会议信息抽取"); return; }
-    if (d.series.every((s) => !s.values[s.values.length - 1])) { d.weeks.pop(); d.series.forEach((s) => s.values.pop()); }  // 本周还没有会就不画
-    el.innerHTML = `<div class="river-wrap"><svg id="rsvg"></svg><div class="rlegend">${d.series.map((s, i) => `<span class="lg" data-i="${i}"><i style="background:${riverColor(i)}"></i>${esc(s.name)} <span class="muted">${s.total}</span></span>`).join("")}</div><div id="rtip" class="rtip" hidden></div></div>`;
-    const svg = $("#rsvg"); const W = svg.clientWidth || 1000, H = svg.clientHeight || 460; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const n = d.weeks.length, pad = 40, x = (i) => pad + i * (W - 2 * pad) / (n - 1);
-    const totals = d.weeks.map((_, i) => d.series.reduce((s, se) => s + se.values[i], 0));
-    const maxT = Math.max(1, ...totals); const sc = (H - 70) / maxT;
-    let base = d.weeks.map((_, i) => H / 2 - 15 - totals[i] * sc / 2);   // 居中堆叠（河流形状）
-    const smooth = (pts) => pts.map((p, i) => i ? `C${(pts[i - 1][0] + p[0]) / 2},${pts[i - 1][1]} ${(pts[i - 1][0] + p[0]) / 2},${p[1]} ${p[0]},${p[1]}` : `M${p[0]},${p[1]}`).join(" ");
-    const layers = d.series.map((s, k) => {
-      const top = base.map((b, i) => [x(i), b]); const bot = base.map((b, i) => [x(i), b + s.values[i] * sc]);
-      base = bot.map((p) => p[1]);
-      const path = svgEl("path", { d: smooth(top) + " L" + smooth(bot.slice().reverse()).slice(1) + " Z", fill: riverColor(k), "fill-opacity": 0.85, stroke: "#fff", "stroke-width": 1, class: "rl" });
-      path.style.transformOrigin = `${W / 2}px ${H / 2}px`; path.style.animation = `grow .9s ease ${k * 0.07}s both`;
-      path.onmousemove = (ev) => { const r = svg.getBoundingClientRect(); const i = Math.max(0, Math.min(n - 1, Math.round(((ev.clientX - r.left) * W / r.width - pad) / ((W - 2 * pad) / (n - 1))))); const tip = $("#rtip"); tip.hidden = false; tip.style.left = (ev.clientX - r.left + 12) + "px"; tip.style.top = (ev.clientY - r.top + 12) + "px"; tip.innerHTML = `<b>${esc(s.name)}</b><br>${d.weeks[i]} 那周：${s.values[i]} 场会提到`; layers.forEach((l) => l.setAttribute("fill-opacity", l === path ? 0.95 : 0.25)); };
-      path.onmouseleave = () => { $("#rtip").hidden = true; layers.forEach((l) => l.setAttribute("fill-opacity", 0.85)); };
-      svg.appendChild(path); return path;
-    });
-    d.weeks.forEach((w, i) => { if (i % 2 === 0) { const t = svgEl("text", { x: x(i), y: H - 8, "text-anchor": "middle", "font-size": 11, fill: "#8b94a5" }); t.textContent = w; svg.appendChild(t); } });
-  }
-  function riverColor(i) { return ["#3a3a3c", "#55555a", "#6e6e73", "#8e8e93", "#a1a1a6", "#b8b8bc", "#c7c7cc", "#dcdbd7"][i % 8]; }
 
   // ------------------------------------------------------------ 周报月报
   const REP = { cur: null };
