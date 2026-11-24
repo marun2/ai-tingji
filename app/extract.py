@@ -120,8 +120,16 @@ def _run(ids: list[int], by: str):
         _set({"running": True, "done": 0, "total": len(ids), "by": by, "started": access.now()})
         lk = threading.Lock()
 
+        stop = {"why": ""}
+
         def work(mid):
             nonlocal done
+            if stop["why"]:                      # 余额不足等：后面的不再一个个去撞，直接跳过（下次补全会重试）
+                st["fail"] += 1
+                reasons[stop["why"]] += 1
+                with lk:
+                    done += 1
+                return
             m = db.q1("SELECT id, title, start_time, summary, todos, transcript FROM meeting WHERE id = ?", (mid,))
             try:
                 if m and ((m["summary"] or "").strip() or (m["transcript"] or "").strip()):
@@ -133,6 +141,8 @@ def _run(ids: list[int], by: str):
                 st["fail"] += 1
                 reasons[_reason(e)] += 1
                 examples.setdefault(_reason(e), str(e)[:200])
+                if _reason(e) in ("中转站余额或额度不足", "密钥无效或没有权限"):
+                    stop["why"] = _reason(e)
                 print(f"抽取失败 #{mid}：{e}", flush=True)
             with lk:
                 done += 1
@@ -152,6 +162,8 @@ def _run(ids: list[int], by: str):
 def _reason(e: Exception) -> str:
     """把出错信息归成几类，管理页上好看懂"""
     m = str(e)
+    if re.search(r"余额|额度|quota|insufficient|balance|402|欠费", m, re.I):
+        return "中转站余额或额度不足"
     if "429" in m:
         return "请求太频繁，被中转站限流"
     if re.search(r"返回 5\d\d", m):
