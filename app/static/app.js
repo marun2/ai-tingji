@@ -807,6 +807,7 @@
     if (st.running) h += `，正在进行 ${st.done}/${st.total}<div class="progress"><div style="width:${st.total ? st.done / st.total * 100 : 3}%"></div></div>`;
     else if (st.error) h += ` · <span class="tag bad">中断</span> ${esc(st.error)}`;
     else if (st.finished) h += ` · 上次完成：${esc(st.finished)}${st.fail ? `，失败 ${st.fail} 场（再点“补全抽取”会重试）` : ""}`;
+    if ((st.errors || []).length) h += `<div style="margin-top:8px;font-size:12.5px">失败原因：${st.errors.map((e) => `<div title="${esc(e.example)}">· ${esc(e.reason)} <b>${e.count}</b> 场 <span class="muted">${esc(e.example.slice(0, 80))}</span></div>`).join("")}</div>`;
     el.innerHTML = h;
     if (st.running && S.adminTab === "model" && S.view === "admin") exTimer = setTimeout(pollEx, 3000);
   }

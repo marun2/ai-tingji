@@ -45,7 +45,7 @@ def extract_one(m: dict) -> dict:
         content += f"\n\n原文节选：\n{m['transcript'][:3000]}"
     s = llm.settings()
     text = llm.chat([{"role": "system", "content": PROMPT}, {"role": "user", "content": content}],
-                    model=s["llm_model_classify"] or None, max_tokens=1500, timeout=120, task="extract")
+                    model=s["llm_model_classify"] or None, max_tokens=3000, timeout=180, task="extract")
     return llm.parse_json(text)
 
 
@@ -114,6 +114,8 @@ def start(by: str, redo: bool = False) -> dict:
 def _run(ids: list[int], by: str):
     with _lock:
         st = collections.Counter()
+        reasons = collections.Counter()
+        examples: dict[str, str] = {}
         done = 0
         _set({"running": True, "done": 0, "total": len(ids), "by": by, "started": access.now()})
         lk = threading.Lock()
@@ -129,19 +131,44 @@ def _run(ids: list[int], by: str):
                     st["skip"] += 1
             except Exception as e:  # noqa: BLE001
                 st["fail"] += 1
-                st["last_error"] = 0
+                reasons[_reason(e)] += 1
+                examples.setdefault(_reason(e), str(e)[:200])
                 print(f"抽取失败 #{mid}：{e}", flush=True)
             with lk:
                 done += 1
                 if done % 10 == 0 or done == len(ids):
-                    _set({"running": True, "done": done, "total": len(ids), "by": by, "ok": st["ok"], "fail": st["fail"]})
+                    _set({"running": True, "done": done, "total": len(ids), "by": by, "ok": st["ok"], "fail": st["fail"],
+                          "errors": [{"reason": r, "count": n, "example": examples.get(r, "")} for r, n in reasons.most_common(5)]})
 
         try:
-            with ThreadPoolExecutor(max_workers=4) as ex:
+            with ThreadPoolExecutor(max_workers=3) as ex:
                 list(ex.map(work, ids))
-            _set({"running": False, "done": done, "total": len(ids), "by": by, "finished": access.now(), "ok": st["ok"], "fail": st["fail"]})
+            _set({"running": False, "done": done, "total": len(ids), "by": by, "finished": access.now(), "ok": st["ok"], "fail": st["fail"],
+                  "errors": [{"reason": r, "count": n, "example": examples.get(r, "")} for r, n in reasons.most_common(5)]})
         except Exception as e:  # noqa: BLE001
             _set({"running": False, "error": str(e)[:300], "by": by, "finished": access.now()})
+
+
+def _reason(e: Exception) -> str:
+    """把出错信息归成几类，管理页上好看懂"""
+    m = str(e)
+    if "429" in m:
+        return "请求太频繁，被中转站限流"
+    if re.search(r"返回 5\d\d", m):
+        return "中转站或模型服务出错（5xx）"
+    if re.search(r"返回 40[13]", m):
+        return "密钥无效或没有权限"
+    if "timed out" in m or "超时" in m or "timeout" in m.lower():
+        return "等待回答超时"
+    if "连接大模型失败" in m:
+        return "连不上中转站"
+    if "截断" in m:
+        return "回答太长被截断"
+    if "格式" in m or "JSON" in m or isinstance(e, ValueError):
+        return "回答格式不对"
+    if "空内容" in m:
+        return "返回了空内容"
+    return "其他：" + m[:40]
 
 
 def after_import(mids: list[int]):

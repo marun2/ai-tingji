@@ -63,22 +63,36 @@ def chat(messages: list[dict], model: str | None = None, temperature: float = 0.
     payload = json.dumps({"model": model or s["llm_model"], "messages": messages, "temperature": temperature,
                           "max_tokens": max_tokens, "stream": False}).encode()
     last = None
-    for attempt in range(3):
+    for attempt in range(4):
         req = urllib.request.Request(url, data=payload, method="POST", headers={
             "Authorization": f"Bearer {s['llm_api_key']}", "Content-Type": "application/json"})
+        wait = 3 * (attempt + 1)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
             _record(task, data.get("usage") or {}, messages, data)
-            return data["choices"][0]["message"]["content"] or ""
+            ch = (data.get("choices") or [{}])[0]
+            content = (ch.get("message") or {}).get("content") or ""
+            if not content.strip():
+                last = "大模型返回了空内容" + ("（输出长度不够，被截断）" if ch.get("finish_reason") == "length" else "")
+            else:
+                if ch.get("finish_reason") == "length":
+                    content += "\n[[TRUNCATED]]"
+                return content
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
             last = f"大模型接口返回 {e.code}：{body}"
             if e.code in (400, 401, 403, 404):
                 break  # 配置问题，重试也没用
+            if e.code == 429 or e.code >= 500:          # 太频繁 / 中转站忙：等久一点
+                try:
+                    wait = max(wait, min(60, int(e.headers.get("Retry-After") or 0)))
+                except (TypeError, ValueError):
+                    pass
+                wait = max(wait, 10 * (attempt + 1))
         except Exception as e:  # noqa: BLE001
             last = f"连接大模型失败：{e}"
-        time.sleep(2 * (attempt + 1))
+        time.sleep(wait)
     raise LLMError(last or "大模型调用失败")
 
 
@@ -138,10 +152,37 @@ def save_budget(d: dict):
 
 
 def parse_json(text: str) -> dict:
-    m = re.search(r"\{.*\}", text or "", re.S)
-    if not m:
-        raise LLMError("大模型没有按格式回答")
-    return json.loads(m.group(0))
+    """从回答里取出 JSON：去掉 ```json 包裹、思考过程；被截断的尽量补全括号"""
+    t = text or ""
+    truncated = "[[TRUNCATED]]" in t
+    t = t.replace("[[TRUNCATED]]", "")
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S)
+    t = re.sub(r"```(?:json)?", "", t)
+    start = t.find("{")
+    if start < 0:
+        raise LLMError("大模型没有按格式回答（没有 JSON）")
+    body = t[start:]
+    end = body.rfind("}")
+    for cand in ([body[:end + 1]] if end >= 0 else []) + [body]:
+        try:
+            return json.loads(cand)
+        except ValueError:
+            pass
+        # 修补：去掉末尾逗号、补齐没闭合的括号和引号
+        c = re.sub(r",\s*([}\]])", r"\1", cand.rstrip().rstrip(","))
+        if c.count('"') % 2:
+            c += '"'
+        stack = []
+        for ch in re.sub(r'"(?:\\.|[^"\\])*"', "", c):
+            if ch in "{[":
+                stack.append("}" if ch == "{" else "]")
+            elif ch in "}]" and stack:
+                stack.pop()
+        try:
+            return json.loads(re.sub(r",\s*$", "", c) + "".join(reversed(stack)))
+        except ValueError:
+            continue
+    raise LLMError("大模型的回答" + ("被截断了，" if truncated else "") + "格式不对，没法解析")
 
 
 CLASSIFY_PROMPT = """你是均瑶健康的会议归档助手。根据会议信息，判断这场会应该放进哪些文件夹（可以多个）。
@@ -168,7 +209,7 @@ def classify(title: str, creator: str, keywords: str, summary: str, rule_guess: 
     content = (f"标题：{title}\n创建人：{creator}\n关键词：{keywords or '无'}\n"
                f"规则初判：{'、'.join(rule_guess) or '无'}\n\n摘要：\n{(summary or '')[:3500]}")
     text = chat([{"role": "system", "content": CLASSIFY_PROMPT}, {"role": "user", "content": content}],
-                model=s["llm_model_classify"] or None, max_tokens=300, timeout=90, task="classify")
+                model=s["llm_model_classify"] or None, max_tokens=800, timeout=90, task="classify")
     d = parse_json(text)
     folders = [f for f in d.get("folders") or [] if f in ALLOWED]
     try:

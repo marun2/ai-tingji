@@ -41,7 +41,7 @@ def understand(question: str, history: list[dict]) -> dict:
     msg = (f"对话历史：\n{hist}\n\n" if hist else "") + f"问题：{question}"
     try:
         d = llm.parse_json(llm.chat([{"role": "system", "content": UNDERSTAND.replace("{today}", today.isoformat()).replace("{weekday}", "星期" + wd)},
-                                     {"role": "user", "content": msg}], max_tokens=300, timeout=60, task="ask"))
+                                     {"role": "user", "content": msg}], max_tokens=800, timeout=60, task="ask"))
     except Exception:  # noqa: BLE001 —— 理解失败就按原话检索
         d = {}
     kws = [str(k).strip() for k in d.get("keywords") or [] if str(k).strip()][:8]
