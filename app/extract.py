@@ -44,9 +44,17 @@ def extract_one(m: dict) -> dict:
     if len(m.get("summary") or "") < 200 and m.get("transcript"):
         content += f"\n\n原文节选：\n{m['transcript'][:3000]}"
     s = llm.settings()
-    text = llm.chat([{"role": "system", "content": PROMPT}, {"role": "user", "content": content}],
-                    model=s["llm_model_classify"] or None, max_tokens=3000, timeout=180, task="extract")
-    return llm.parse_json(text)
+    msgs = [{"role": "system", "content": PROMPT}, {"role": "user", "content": content}]
+    text = llm.chat(msgs, model=s["llm_model_classify"] or None, max_tokens=3000, timeout=180, task="extract")
+    try:
+        return llm.parse_json(text)
+    except llm.LLMError:
+        # 偶尔回答格式不对（多半是文字里夹了英文双引号、或者写了一半）：提醒一次再要一遍，内容精简些
+        msgs += [{"role": "assistant", "content": (text or "")[:1500]},
+                 {"role": "user", "content": "上面的回答不是合法 JSON。请重新只输出一个合法的 JSON 对象，不要任何解释；"
+                                             "字符串里不要用英文双引号（需要引号用中文“”）；每类最多 5 条，句子写短一些。"}]
+        text = llm.chat(msgs, model=s["llm_model_classify"] or None, max_tokens=3000, timeout=180, task="extract")
+        return llm.parse_json(text)
 
 
 def _save(mid: int, d: dict):

@@ -181,7 +181,14 @@ def parse_json(text: str) -> dict:
         try:
             return json.loads(re.sub(r",\s*$", "", c) + "".join(reversed(stack)))
         except ValueError:
-            continue
+            pass
+        # 修补：字符串中间夹了英文双引号（如 推进"春节备货"方案）→ 换成中文引号
+        q = re.sub(r'(?<=[\u4e00-\u9fff\w])"(?=[\u4e00-\u9fff])|(?<=[\u4e00-\u9fff])"(?=[\u4e00-\u9fff\w])', "”", cand)
+        if q != cand:
+            try:
+                return json.loads(q)
+            except ValueError:
+                continue
     raise LLMError("大模型的回答" + ("被截断了，" if truncated else "") + "格式不对，没法解析")
 
 
