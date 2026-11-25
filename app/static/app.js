@@ -414,28 +414,95 @@
   function bindDays(fn) { const d = $("#insDays"); if (d) d.onchange = () => { INS.days = +d.value; fn(); }; }
   const emptyIns = (msg) => `<div class="empty-state"><div><div class="big">${GLYPH}</div>${msg}</div></div>`;
 
+  // ------------------------------------------------------------ 经营驾驶舱（设计说明 docs/经营驾驶舱.md）
+  // 定位：老板 / 负责人每周看一次，3 分钟知道“各部门会上说了什么、哪些事要我关注”；每条都能点开原会议、一键追问
+  // 卡片由后端 cockpit.CARDS 决定顺序，这里按 key 找渲染函数；以后加卡片两边各加一个函数
+  const CK = { period: "14d", folder: "" };
+  const ckTrack = (card, action) => api("api/insights/track", { method: "POST", json: { card, action } }).catch(() => {});
+  const ckAsk = (card, q) => { ckTrack(card, "ask"); go("ask"); setTimeout(() => sendAsk(q), 50); };
+  const mmdd = (d) => (d || "").slice(5, 10);
+  const spark = (arr) => { const mx = Math.max(1, ...arr); return `<svg class="spark" viewBox="0 0 ${arr.length * 7} 20">${arr.map((v, i) => `<rect x="${i * 7}" y="${20 - Math.max(1.5, v / mx * 20)}" width="5" height="${Math.max(1.5, v / mx * 20)}" rx="1" fill="${i === arr.length - 1 ? "currentColor" : "#d9dde8"}"/>`).join("")}</svg>`; };
+  const deltaTag = (n, p) => { const d = n - p; return d === 0 ? `<span class="dlt">持平</span>` : `<span class="dlt ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`; };
+  const ttl = (t) => esc((t || "").replace(/^\d{1,2}[-./]\d{1,2}\s*/, ""));   // 标题开头的日期和后面重复，去掉
+  const srcLine = (x) => `<div class="ck-src" data-m="${x.id}"><span>${mmdd(x.date)}</span>${ttl(x.title)}</div>`;
+  const ckEmpty = (msg) => `<div class="ck-empty">${msg}</div>`;
+
+  const COCKPIT_CARDS = {
+    attention(c) {
+      if (!c.items.length) return ckEmpty("这段时间会上没有提到明显的风险或问题");
+      return c.items.map((x, i) => `<div class="att">
+        <div class="att-top"><span class="st ${x.status === "持续" ? "keep" : "new"}">${x.status === "持续" ? "持续 · 自 " + mmdd(x.since) : "新出现"}</span><span class="att-meta">${x.meetings} 场会提到${x.folders.length ? " · " + x.folders.map(esc).join("、") : ""} · 最近 ${mmdd(x.last)}</span></div>
+        <div class="att-t">${esc(x.text)}</div>
+        <div class="att-act"><button class="lk" data-src="${i}">看原会议（${x.sources.length}）</button><button class="lk" data-ask="${i}">追问</button></div>
+        <div class="att-src" id="attSrc${i}" hidden>${x.sources.map(srcLine).join("")}</div></div>`).join("") +
+        (c.total > c.items.length ? `<div class="ck-more">另有 ${c.total - c.items.length} 条只在单场会里提过，可在知识库里搜</div>` : "");
+    },
+    momentum(c) {
+      const row = (x, dir) => `<div class="mo" data-name="${esc(x.name)}">${shapeIcon(x.type)}<span class="mo-n">${esc(x.name)}</span><span class="mo-t">${x.type}</span><span class="mo-s" style="color:${dir === "up" ? "#e0505a" : "#3b9ae1"}">${spark(x.spark)}</span><span class="mo-v">${x.before} → <b>${x.recent}</b></span></div>`;
+      if (!c.up.length && !c.down.length) return ckEmpty("和之前比没有明显变化");
+      return `<div class="mo-h">升温<span>这一期提得明显更多</span></div>${c.up.map((x) => row(x, "up")).join("") || ckEmpty("没有")}
+        ${c.down.length ? `<div class="mo-h" style="margin-top:12px">降温<span>以前常提、这一期几乎没提</span></div>${c.down.map((x) => row(x, "down")).join("")}` : ""}
+        <div class="ck-more">数字是“平均每期场次 → 这一期场次”，点一行可以追问</div>`;
+    },
+    decisions(c) {
+      if (!c.groups.length) return ckEmpty("这段时间会上没有记录到明确的决议");
+      return c.groups.map((g) => `<div class="dg"><div class="dg-h">${esc(g.folder)}<span>${g.count} 项</span></div>${g.items.map((x) => `<div class="dc" data-m="${x.id}"><div>${esc(x.text)}</div><div class="dc-m">${mmdd(x.date)} · ${ttl(x.title)}${x.times > 1 ? ` · ${x.times} 场会都提到` : ""}</div></div>`).join("")}${g.count > g.items.length ? `<div class="ck-more">还有 ${g.count - g.items.length} 项</div>` : ""}</div>`).join("");
+    },
+    numbers(c) {
+      if (!c.groups.length) return ckEmpty("这段时间会上没有提到具体数字");
+      return c.groups.map((g) => `<div class="ng"><div class="ng-h">${esc(g.label)}<span>${g.count} 处</span></div>${g.items.map((x) => `<div class="nm" data-m="${x.id}"><b>${esc(x.value)}${esc(x.unit)}</b><span class="nm-c">${esc(x.name !== g.label ? x.name + " · " : "")}${esc(x.text)}</span><span class="nm-d">${x.times > 1 ? x.times + " 场会 · " : ""}${mmdd(x.date)}</span></div>`).join("")}</div>`).join("");
+    },
+    pulse(c) {
+      if (!c.items.length) return ckEmpty("这段时间没有会议");
+      return `<div class="pulse">${c.items.map((x) => `<div class="pl ${CK.folder || (CK.folders || []).length < 2 ? "" : "click"}" data-f="${esc(x.folder)}">
+        <div class="pl-h"><span>${esc(x.folder)}</span><span class="pl-g">${x.group}</span></div>
+        <div class="pl-n">${x.meetings}<small>场会</small>${deltaTag(x.meetings, x.prev)}</div>
+        <div class="pl-c"><span class="${x.risks ? "r" : ""}">风险 ${x.risks}</span><span>决议 ${x.decisions}</span></div>
+        <div class="pl-t">${x.top.map((t) => `<span>${shapeIcon(t.type)}${esc(t.name)}</span>`).join("") || '<span class="muted">—</span>'}</div></div>`).join("")}</div>
+        ${CK.folder || (CK.folders || []).length < 2 ? "" : `<div class="ck-more">点一个部门，整个驾驶舱只看这个部门</div>`}`;
+    },
+    rhythm(c) {
+      const mx = Math.max(1, ...c.trend), W = 600, H = 90, bw = W / c.trend.length;
+      return `<svg viewBox="0 0 ${W} ${H}" class="rhythm">${c.trend.map((v, i) => { const h = (v / mx) * (H - 34); return `<rect x="${i * bw + 8}" y="${H - 18 - h}" width="${bw - 16}" height="${Math.max(h, 1)}" rx="3" fill="${i === c.trend.length - 1 ? "#4f63d9" : "#c3ccf4"}"><title>${c.labels[i]} 那周：${v} 场</title></rect><text x="${i * bw + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#8e8e93">${c.labels[i]}</text>${v ? `<text x="${i * bw + bw / 2}" y="${H - 22 - h}" text-anchor="middle" font-size="10" fill="#55555a">${v}</text>` : ""}`; }).join("")}</svg>`;
+    },
+  };
+  const CK_LAYOUT = { attention: "w7", momentum: "w5", decisions: "w7", numbers: "w5", pulse: "w12", rhythm: "w12" };
+
   async function insCockpit() {
-    $("#insOpts").innerHTML = "";
-    const el = $("#insBody"); el.innerHTML = emptyIns("加载中…");
-    let d; try { d = await api("api/insights/cockpit"); } catch (e) { el.innerHTML = emptyIns(esc(e.message)); return; }
-    const mx = Math.max(1, ...d.trend);
-    const W = 560, H = 150, bw = W / d.trend.length;
-    const bars = d.trend.map((v, i) => `<rect x="${i * bw + 6}" y="${H - 20 - (v / mx) * (H - 40)}" width="${bw - 12}" height="${(v / mx) * (H - 40)}" rx="4" fill="${i === d.trend.length - 1 ? "#4f63d9" : "#c3ccf4"}"><title>${d.trend_labels[i]} 那周：${v} 场</title></rect><text x="${i * bw + bw / 2}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#8b94a5">${d.trend_labels[i]}</text>${v ? `<text x="${i * bw + bw / 2}" y="${H - 24 - (v / mx) * (H - 40)}" text-anchor="middle" font-size="10" fill="#4f596b">${v}</text>` : ""}`).join("");
-    const delta = d.this_week - d.last_week;
-    const list = (items, fmt) => items.length ? items.map((x) => `<div class="li" data-m="${x.meeting_id}">${fmt(x)}<div class="lm">${esc((x.start_time || "").slice(5, 10))} · ${esc(x.title)}</div></div>`).join("") : `<div class="muted">近两周暂无</div>`;
-    el.innerHTML = `<div class="cockpit">
-      <div class="kpis"><div class="kpi"><div class="kl">本周会议</div><div class="kn">${d.this_week}</div><div class="kd ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)} 较上周</div></div>
-        <div class="kpi"><div class="kl">上周会议</div><div class="kn">${d.last_week}</div></div>
-        <div class="kpi"><div class="kl">最近一场会</div><div class="kn sm">${esc((d.latest_meeting || "—").slice(0, 10))}</div></div>
-        <div class="kpi"><div class="kl">最近导入</div><div class="kn sm">${esc((d.last_import || "还没导入").slice(0, 10))}</div>${d.pending ? `<div class="kd warn">待确认 ${d.pending} 场</div>` : ""}</div></div>
-      <div class="cgrid">
-        <div class="card"><h3>近 12 周会议数</h3><svg viewBox="0 0 ${W} ${H}" class="trend">${bars}</svg></div>
-        <div class="card"><h3>升温最快</h3><p class="desc">最近两周比之前六周提得明显更多的客户、产品、话题</p>${d.rising.length ? d.rising.map((r) => `<div class="rise">${shapeIcon(r.type)}<span class="rn">${esc(r.name)}</span><span class="muted">${r.type}</span><span class="rb"><i style="width:${Math.min(100, r.lift * 40)}%"></i></span><span class="rv">${r.recent} 场</span></div>`).join("") : `<div class="muted">数据还不够</div>`}</div>
-        <div class="card"><h3>近两周的风险与问题</h3>${list(d.risks, (x) => esc(x.text))}</div>
-        <div class="card"><h3>近两周的决议</h3>${list(d.decisions, (x) => esc(x.text))}</div>
-        <div class="card wide"><h3>近两周会上提到的数字</h3><p class="desc">来自会议发言，未经财务核实</p>${list(d.metrics, (x) => `<b>${esc(x.label)}</b> ${esc(x.value)}${esc(x.unit || "")} <span class="muted">${esc(x.text)}</span>`)}</div>
-      </div></div>`;
-    $$(".li[data-m]", el).forEach((x) => x.onclick = () => openMeetingModal(+x.dataset.m));
+    const el = $("#insBody");
+    const opts = () => {
+      $("#insOpts").innerHTML = `<div class="subnav ck-per">${(CK.periods || []).map((p) => `<button data-p="${p.key}" class="${CK.period === p.key ? "on" : ""}">${p.label}</button>`).join("")}</div>` +
+        ((CK.folders || []).length > 1 ? `<select id="ckFolder"><option value="">全部部门</option>${CK.folders.map((f) => `<option ${CK.folder === f ? "selected" : ""}>${esc(f)}</option>`).join("")}</select>` : "");
+      $$(".ck-per button").forEach((b) => b.onclick = () => { CK.period = b.dataset.p; ckTrack("cockpit", "period"); insCockpit(); });
+      const fs = $("#ckFolder"); if (fs) fs.onchange = () => { CK.folder = fs.value; ckTrack("cockpit", "folder"); insCockpit(); };
+    };
+    if (!CK.periods) $("#insOpts").innerHTML = ""; else opts();
+    el.innerHTML = emptyIns("加载中…");
+    let d; try { d = await api("api/insights/cockpit?" + new URLSearchParams({ period: CK.period, folder: CK.folder })); } catch (e) { el.innerHTML = emptyIns(esc(e.message)); return; }
+    Object.assign(CK, { periods: d.periods, folders: d.folders, folder: d.folder, period: d.period.key }); opts();
+    if (!CK.viewed) { CK.viewed = true; ckTrack("cockpit", "view"); }
+    const s = d.summary, f = d.freshness, cv = d.coverage;
+    const flags = [];
+    if (f.latest_meeting) flags.push(`<span class="flag">会议记录截至 ${mmdd(f.latest_meeting)}</span>`);
+    if (f.stale) flags.push(`<span class="flag warn">已经 ${f.days_since_import} 天没导入新听记</span>`);
+    if (cv.meetings && cv.extracted < cv.meetings) flags.push(`<span class="flag warn" title="还没整理的会不会出现在下面的关注、决议、数字里">这期 ${cv.meetings} 场会还有 ${cv.meetings - cv.extracted} 场没整理，内容不全</span>`);
+    if (d.pending) flags.push(`<span class="flag click" id="ckPend">待确认 ${d.pending} 场</span>`);
+    const head = `<div class="ck-head"><div class="ck-sum"><span class="ck-range">${d.folder ? esc(d.folder) + " · " : ""}${d.period.label}<small>${mmdd(d.period.start)} ~ ${mmdd(d.period.end)}</small></span>
+        <span><b>${s.meetings}</b> 场会${deltaTag(s.meetings, s.prev)}</span>${d.folder || d.folders.length < 2 ? "" : `<span><b>${s.depts}</b> 个部门</span>`}<span><b>${s.attention}</b> 件事要关注</span><span><b>${s.decisions}</b> 项决定</span>
+        ${d.folder ? `<button class="lk" id="ckAll">← 看全部部门</button>` : ""}</div><div class="ck-flags">${flags.join("")}</div></div>`;
+    if (!s.meetings && !d.cards.some((c) => c.key === "rhythm")) { el.innerHTML = head + emptyIns("这段时间没有会议"); return; }
+    el.innerHTML = `<div class="cockpit2">${head}<div class="ck-grid">${d.cards.map((c) => `<section class="ck-card ${CK_LAYOUT[c.key] || "w6"}" data-card="${c.key}">
+        <div class="ck-ch"><h3>${esc(c.title)}</h3><span>${esc(c.desc || "")}</span></div>
+        <div class="ck-cb">${c.error ? ckEmpty(esc(c.error)) : (COCKPIT_CARDS[c.key] ? COCKPIT_CARDS[c.key](c) : "")}</div></section>`).join("")}</div></div>`;
+    // 交互：点开会议 / 追问 / 部门下钻，并记点击（只记卡片和动作，不记人）
+    $$("[data-m]", el).forEach((x) => x.onclick = () => { ckTrack(x.closest("[data-card]").dataset.card, "open"); openMeetingModal(+x.dataset.m); });
+    const att = d.cards.find((c) => c.key === "attention");
+    $$("[data-src]", el).forEach((b) => b.onclick = () => { const box = $("#attSrc" + b.dataset.src); box.hidden = !box.hidden; if (!box.hidden) ckTrack("attention", "expand"); });
+    $$("[data-ask]", el).forEach((b) => b.onclick = () => ckAsk("attention", `关于“${att.items[+b.dataset.ask].text}”，会上具体是怎么说的？原因是什么、谁在跟进、有没有定解决办法？`));
+    $$(".mo", el).forEach((r) => r.onclick = () => ckAsk("momentum", `最近会议里关于「${r.dataset.name}」都讨论了什么？和之前比有什么变化？`));
+    $$(".pl.click", el).forEach((p) => p.onclick = () => { CK.folder = p.dataset.f; ckTrack("pulse", "drill"); insCockpit(); el.scrollTop = 0; });
+    const all = $("#ckAll"); if (all) all.onclick = () => { CK.folder = ""; insCockpit(); };
+    const pend = $("#ckPend"); if (pend) pend.onclick = () => { S.sel = { folder: "", month: "", pending: true }; go("kb"); };
   }
 
   async function insGraph() {
@@ -724,6 +791,8 @@
       <div id="embState" class="muted">加载中…</div></div>
       <div class="card"><h3>大模型用量</h3><p class="desc">按月统计分类、抽取、提问、写报告消耗的字数（tokens）。设个每月额度，超过 80% 会在这里和管理页顶部提醒。价格填了就能估算花费（按你中转站的价格，每百万 tokens 多少元）。</p>
       <div id="useBox" class="muted">加载中…</div></div>
+      <div class="card"><h3>驾驶舱使用情况（近 30 天）</h3><p class="desc">驾驶舱每张卡片被点开、追问了多少次（只记次数，不记是谁）。长期没人点的卡片说明没用，可以改掉或换成别的。</p>
+      <div id="ckUse" class="muted">加载中…</div></div>
       <div class="card"><h3>会议信息抽取</h3>
       <p class="desc">用大模型从每场会的摘要里整理出<b>决议、风险问题、关键数字、客户 / 平台 / 产品 / 竞品 / 项目 / 区域、话题</b>，周报月报和可视化都靠它。新导入的会议会自动抽；第一次全部抽一遍大约一两个小时，会消耗大模型用量。</p>
       <div id="exState" class="muted" style="margin-bottom:10px">加载中…</div>
@@ -765,7 +834,15 @@
     $("#exGo").onclick = () => exGo(false); $("#exRedo").onclick = () => exGo(true);
   }
   const fmtTok = (n) => n >= 1e8 ? (n / 1e8).toFixed(2) + " 亿" : n >= 1e4 ? (n / 1e4).toFixed(1) + " 万" : String(n);
+  const CK_NAMES = { cockpit: "驾驶舱", attention: "需要关注", momentum: "热度变化", decisions: "定下来的事", numbers: "会上提到的数字", pulse: "部门动态", rhythm: "会议节奏" };
+  const CK_ACTS = { view: "打开", period: "切换时间", folder: "选部门", open: "点开会议", ask: "追问", expand: "展开原会议", drill: "点部门下钻" };
+  async function loadCkUse() {
+    const el = $("#ckUse"); if (!el) return;
+    let r; try { r = await api("api/admin/cockpit-usage"); } catch (e) { el.textContent = e.message; return; }
+    el.innerHTML = r.items.length ? `<table class="grid"><tr><th>卡片</th><th>动作</th><th>次数</th></tr>${r.items.map((x) => `<tr><td>${esc(CK_NAMES[x.card] || x.card)}</td><td>${esc(CK_ACTS[x.action] || x.action)}</td><td>${x.n}</td></tr>`).join("")}</table>` : "还没有记录";
+  }
   async function loadUsage() {
+    loadCkUse();
     const el = $("#useBox"); if (!el) return;
     let u; try { u = await api("api/admin/usage"); } catch (e) { el.textContent = e.message; return; }
     const tot = u.total_in + u.total_out, pct = u.budget_tokens ? Math.min(100, tot / u.budget_tokens * 100) : 0;

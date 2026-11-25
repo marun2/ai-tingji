@@ -147,6 +147,15 @@ CREATE TABLE IF NOT EXISTS term_rule (
   updated_at TEXT
 );
 
+-- 驾驶舱各卡片被点了多少次（持续迭代用：没人点的卡片该改或该删）
+CREATE TABLE IF NOT EXISTS ui_event (
+  day TEXT NOT NULL,
+  card TEXT NOT NULL,
+  action TEXT NOT NULL,            -- open 点开会议 / ask 追问 / view 打开驾驶舱 / period 切时间 等
+  n INTEGER DEFAULT 0,
+  PRIMARY KEY (day, card, action)
+);
+
 -- 大模型用量（按天、按用途）
 CREATE TABLE IF NOT EXISTS llm_usage (
   day TEXT NOT NULL,

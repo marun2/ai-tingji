@@ -3,6 +3,7 @@
 用法：python scripts/smoke.py
 不需要真实数据，也不需要大模型；用临时目录里的 SQLite。
 """
+import datetime as dt
 import os
 import pathlib
 import sys
@@ -226,8 +227,23 @@ def main():
     check(db.q1("SELECT 1 FROM fact WHERE meeting_id = ? AND text = '叮咚买菜'", (m_biz,)) is not None and synonyms.canonical("叮咚") == "叮咚买菜", "在图谱里合并两个词，已抽取的名称跟着统一")
     terms.merge("叮咚买菜", "叮咚")
     check(isinstance(insights.collab(board, days=730)["folders"], list) and isinstance(insights.river(board)["series"], list), "部门协作、话题河流能出数据")
-    ck = insights.cockpit(lead)
-    check(all("拼多多" not in (r["title"] or "") for r in ck["risks"]), "部门负责人的驾驶舱看不到面试里的风险")
+    print("经营驾驶舱")
+    from app import cockpit
+    biz_day = dt.date.fromisoformat(db.q1("SELECT start_time FROM meeting WHERE id = ?", (m_biz,))["start_time"][:10])
+    cockpit._today = lambda: biz_day + dt.timedelta(days=3)   # 让“近两周”正好包含测试会议
+    ck = cockpit.build(board, "14d")
+    cards = {c["key"]: c for c in ck["cards"]}
+    check(all("error" not in c for c in ck["cards"]) and list(cards) == [k for k, _ in cockpit.CARDS], "驾驶舱六张卡片都能出数据")
+    check(any(x["text"] == "长沙断货" for x in cards["attention"]["items"]), "需要关注里有会上提到的风险")
+    check(any(g["folder"] == rules.BIZ for g in cards["decisions"]["groups"]), "决议按部门分组")
+    check(cards["numbers"]["groups"] and cards["numbers"]["groups"][0]["label"] == "回款", "数字按指标归类")
+    check(ck["coverage"]["meetings"] >= ck["coverage"]["extracted"] >= 1, "能算出这期有几场会还没整理")
+    ckl = cockpit.build(lead, "14d")
+    check(ckl["folders"] == [rules.BIZ] and all(x["folder"] == rules.BIZ for x in {c["key"]: c for c in ckl["cards"]}["pulse"]["items"]), "部门负责人的驾驶舱只有研发市场销售")
+    check(cockpit.build(lead, "14d", folder="人事")["folder"] == "", "部门负责人选不了没权限的部门")
+    check(all(cockpit._period(k)["start"] <= cockpit._period(k)["end"] and cockpit._period(k)["prev_end"] < cockpit._period(k)["start"] for k, _ in cockpit.PERIODS), "五种时间段和对比段都正确")
+    cockpit.track("attention", "open"); cockpit.track("attention", "open")
+    check(any(x["card"] == "attention" and x["n"] == 2 for x in cockpit.track_stats()), "驾驶舱点击次数能记下来")
     data = reports.collect("biz", "2026-11-01", "2026-11-30")
     check(all("面试" not in m["title"] for m in data["meetings"]) and data["stats"]["meetings"] >= 1, "研发市场销售版报告不含面试")
     with db.tx() as c:

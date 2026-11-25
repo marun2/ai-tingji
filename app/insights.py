@@ -1,4 +1,4 @@
-"""可视化用的数据（都按提问人权限过滤）：知识图谱、部门协作、话题河流、经营驾驶舱。
+"""可视化用的数据（都按提问人权限过滤）：知识图谱、部门协作、话题河流（经营驾驶舱在 cockpit.py）。
 只用到部门 / 话题 / 客户 / 产品 / 竞品 / 项目 / 区域这一层，不出现人名（用户要求）。数据来自 extract.py 的 fact 表。"""
 import collections
 import datetime as dt
@@ -149,45 +149,3 @@ def river(u: dict, weeks: int = 16, top: int = 8, kind: str = "话题") -> dict:
     return {"weeks": labels, "series": [{"name": n, "values": series[n], "total": cnt[n]} for n in names], "kind": kind}
 
 
-def cockpit(u: dict) -> dict:
-    """经营驾驶舱：本周 vs 上周、12 周趋势、近期风险、升温最快的客户/话题"""
-    today = _today()
-    wk0 = today - dt.timedelta(days=today.weekday())
-    w, a = _scope(u, start=(wk0 - dt.timedelta(weeks=11)).isoformat())
-    rows = db.q(f"SELECT m.id, m.start_time FROM meeting m WHERE {w}", a)
-    trend = [0] * 12
-    for r in rows:
-        i = (dt.date.fromisoformat(r["start_time"][:10]) - (wk0 - dt.timedelta(weeks=11))).days // 7
-        if 0 <= i < 12:
-            trend[i] += 1
-    this_w, last_w = trend[-1], trend[-2]
-    w14, a14 = _scope(u, days=14)
-    risks = db.q(f"SELECT f.text, m.id AS meeting_id, m.title, m.start_time FROM fact f JOIN meeting m ON m.id = f.meeting_id "
-                 f"WHERE {w14} AND f.kind = 'risk' ORDER BY m.start_time DESC LIMIT 12", a14)
-    decisions = db.q(f"SELECT f.text, m.id AS meeting_id, m.title, m.start_time FROM fact f JOIN meeting m ON m.id = f.meeting_id "
-                     f"WHERE {w14} AND f.kind = 'decision' ORDER BY m.start_time DESC LIMIT 12", a14)
-    metrics = db.q(f"SELECT f.label, f.value, f.unit, f.text, m.id AS meeting_id, m.title, m.start_time FROM fact f JOIN meeting m ON m.id = f.meeting_id "
-                   f"WHERE {w14} AND f.kind = 'metric' ORDER BY m.start_time DESC LIMIT 12", a14)
-    # 升温：最近 2 周 vs 之前 6 周（按周平均）
-    w8, a8 = _scope(u, days=56)
-    nodes, folders, times = _facts(w8, a8)
-    recent, before = collections.Counter(), collections.Counter()
-    cut = (today - dt.timedelta(days=14)).isoformat()
-    for mid, t in times.items():
-        for n in nodes.get(mid, ()):
-            (recent if t >= cut else before)[n] += 1
-    rising = []
-    for n, c in recent.items():
-        if c >= 2:
-            base = before[n] / 3  # 6 周 → 每 2 周平均
-            rising.append({"type": n[0], "name": n[1], "recent": c, "before": round(base, 1), "lift": round(c / (base + 1), 2)})
-    rising.sort(key=lambda x: -x["lift"])
-    fw = collections.Counter(f for mid, t in times.items() if t >= wk0.isoformat() for f in folders.get(mid, []) if f in access.folders_for(u))
-    last_import = db.q1("SELECT created_at FROM import_batch WHERE status = 'done' ORDER BY id DESC LIMIT 1")
-    out = {"this_week": this_w, "last_week": last_w, "trend": trend,
-           "trend_labels": [(wk0 - dt.timedelta(weeks=11 - i)).strftime("%m-%d") for i in range(12)],
-           "folders_this_week": fw.most_common(), "risks": risks, "decisions": decisions, "metrics": metrics, "rising": rising[:10],
-           "last_import": last_import["created_at"] if last_import else None, "latest_meeting": max(times.values()) if times else None}
-    if u["see_all"]:
-        out["pending"] = db.q1("SELECT COUNT(*) AS n FROM meeting WHERE status = 'pending'")["n"]
-    return out

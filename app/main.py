@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from urllib.parse import quote
 
-from . import access, chunks, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
+from . import access, chunks, cockpit, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -550,7 +550,22 @@ async def ins_river(req):
 
 async def ins_cockpit(req):
     u = await run(user, req)
-    return ok(await run(insights.cockpit, u))
+    p = req.query_params
+    return ok(await run(cockpit.build, u, p.get("period") or cockpit.DEFAULT_PERIOD, p.get("folder") or ""))
+
+
+async def ins_track(req):
+    """驾驶舱点击统计（只记哪张卡片、什么动作、几次，不记是谁）"""
+    await run(user, req)
+    b = await body(req)
+    await run(cockpit.track, str(b.get("card") or ""), str(b.get("action") or ""))
+    return ok({})
+
+
+async def ins_track_stats(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    return ok({"items": await run(cockpit.track_stats, 30)})
 
 
 # ---------------------------------------------------------------- 同义词、用量
@@ -688,6 +703,8 @@ routes = [
     Route("/api/insights/collab", ins_collab),
     Route("/api/insights/river", ins_river),
     Route("/api/insights/cockpit", ins_cockpit),
+    Route("/api/insights/track", ins_track, methods=["POST"]),
+    Route("/api/admin/cockpit-usage", ins_track_stats),
     Route("/api/reports", reports_list),
     Route("/api/reports/generate", report_generate, methods=["POST"]),
     Route("/api/reports/{id:int}", report_get),
