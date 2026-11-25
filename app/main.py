@@ -496,12 +496,34 @@ async def report_get(req):
         raise HTTPException(404, str(e))
 
 
+async def report_periods(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    kind = "month" if req.query_params.get("kind") == "month" else "week"
+    return ok({"items": await run(reports.periods, u, kind)})
+
+
+async def report_docx(req):
+    u = await run(user, req)
+    try:
+        name, data = await run(reports.report_docx, u, int(req.path_params["id"]))
+    except PermissionError as e:
+        raise HTTPException(404, str(e))
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
 async def report_generate(req):
     u = await run(user, req)
     access.require_admin(u)
     data = await body(req)
     kind = "month" if data.get("kind") == "month" else "week"
-    if data.get("which") == "current":   # 本周 / 本月至今
+    if data.get("start") and data.get("end"):   # 页面上选的某一期（必须是 periods() 列出来的）
+        ok_p = {(p["start"], p["end"]) for p in await run(reports.periods, u, kind)}
+        if (data["start"], data["end"]) not in ok_p:
+            raise HTTPException(400, "这一期不能生成")
+        s, e = data["start"], data["end"]
+    elif data.get("which") == "current":   # 本周 / 本月至今
         today = reports._now().date()
         start = (today - __import__("datetime").timedelta(days=today.weekday())) if kind == "week" else today.replace(day=1)
         s, e = start.isoformat(), today.isoformat()
@@ -711,6 +733,8 @@ routes = [
     Route("/api/admin/cockpit-usage", ins_track_stats),
     Route("/api/reports", reports_list),
     Route("/api/reports/generate", report_generate, methods=["POST"]),
+    Route("/api/reports/periods", report_periods),
+    Route("/api/reports/{id:int}/docx", report_docx),
     Route("/api/reports/{id:int}", report_get),
     Route("/api/admin/synonyms", syn_get),
     Route("/api/admin/synonyms", syn_put, methods=["PUT"]),

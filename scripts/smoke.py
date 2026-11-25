@@ -263,6 +263,22 @@ def main():
     check((s, e) == ("2026-11-16", "2026-11-22"), "周报周期：上周一到上周日")
     s, e = reports.period("month", __import__("datetime").date(2026, 12, 1))
     check((s, e) == ("2026-11-01", "2026-11-30"), "月报周期：上个月")
+    with db.tx() as c:
+        c.execute("UPDATE report SET stats = ? WHERE id = ?", ('{"meetings": 3}', rid))
+        rid0 = db.insert(c, "report", {"kind": "week", "scope": "all", "period_start": "2026-11-09", "period_end": "2026-11-15", "title": "空",
+                                       "content": "无", "stats": '{"meetings": 0}', "created_by": "smoke", "created_at": access.now()})
+    lst = reports.list_reports(board)
+    check(any(x["versions"].get("all") == rid for x in lst) and not any(rid0 in x["versions"].values() for x in lst), "报告列表一期一条，空报告不列出")
+    check(reports.label("week", "2026-11-16", "2026-11-22") == "第 47 周" and reports.label("month", "2026-10-01", "2026-10-31") == "2026年10月", "报告名称：第几周 / 几月")
+    gr = reports.get_report(board, rid)
+    check({"meetings", "decisions", "risks"} <= set(gr["now"]) and gr["prev"]["start"] == "2026-11-09", "报告带上一期对比")
+    name, data = reports.report_docx(board, rid)
+    check(name.endswith(".docx") and len(data) > 3000, "报告能导出 Word")
+    try:
+        reports.run_async("week", "2020-01-06", "2020-01-12", "smoke")
+        check(False, "没有会议的期不生成")
+    except RuntimeError:
+        check(True, "没有会议的期不生成")
 
     print("同义词 / 用量")
     from app import synonyms, llm as _llm

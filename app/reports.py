@@ -123,8 +123,10 @@ def generate(kind: str, scope: str, start: str, end: str, by: str) -> dict:
     st = data["stats"]
     kind_name = "周报" if kind == "week" else "月报"
     title = f"{'周报' if kind == 'week' else '月报'} {start} ~ {end}（{SCOPES[scope]}）"
-    if not data["meetings"]:
-        content = f"## 本期概览\n\n{start} 到 {end} 没有{'研发市场销售的' if scope == 'biz' else ''}会议记录（可能还没导入这段时间的听记）。"
+    if not data["meetings"]:   # 没有会就不生成空报告（2026-11-25：空报告只会让列表变乱）
+        with db.tx() as c:
+            c.execute("DELETE FROM report WHERE kind = ? AND scope = ? AND period_start = ?", (kind, scope, start))
+        return {"id": None, "title": title, "skipped": True}
     else:
         material = _material(data)
         if len(material) > 60000:  # 会太多时只保留信息最多的会
@@ -155,11 +157,76 @@ def visible_scopes(u: dict) -> list[str]:
 
 
 def list_reports(u: dict) -> list[dict]:
+    """按“一期”合并：同一期的全公司版、研发市场销售版放在一起；没有会议的空报告不列出"""
     sc = visible_scopes(u)
     if not sc:
         return []
-    return db.q(f"SELECT id, kind, scope, period_start, period_end, title, created_at, created_by FROM report WHERE scope IN ({','.join('?' for _ in sc)}) "
-                f"ORDER BY period_start DESC, kind, scope LIMIT 200", sc)
+    rows = db.q(f"SELECT id, kind, scope, period_start, period_end, stats, created_at, created_by FROM report WHERE scope IN ({','.join('?' for _ in sc)}) "
+                f"ORDER BY period_start DESC, kind LIMIT 400", sc)
+    out = {}
+    for r in rows:
+        st = json.loads(r["stats"] or "{}")
+        if not st.get("meetings"):
+            continue
+        k = (r["kind"], r["period_start"])
+        it = out.setdefault(k, {"kind": r["kind"], "period_start": r["period_start"], "period_end": r["period_end"],
+                                "label": label(r["kind"], r["period_start"], r["period_end"]), "versions": {}, "meetings": 0, "created_at": r["created_at"]})
+        it["versions"][r["scope"]] = r["id"]
+        if r["scope"] == sc[0] or not it["meetings"]:
+            it["meetings"] = st.get("meetings", 0)
+    return list(out.values())
+
+
+def label(kind: str, start: str, end: str) -> str:
+    s, e = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+    if kind == "month":
+        full = s.day == 1 and (e + dt.timedelta(days=1)).day == 1
+        return f"{s.year}年{s.month}月" + ("" if full else f"（{s.month}-{s.day} 至 {e.month}-{e.day}）")
+    wk = s.isocalendar()[1]
+    full = (e - s).days == 6
+    return f"第 {wk} 周" + ("" if full else "（至今）")
+
+
+def _counts(scope: str, start: str, end: str) -> dict:
+    d = collect(scope, start, end)
+    n = collections.Counter(f["kind"] for fs in d["facts"].values() for f in fs)
+    return {"meetings": d["stats"]["meetings"], "decisions": n["decision"], "risks": n["risk"], "metrics": n["metric"],
+            "depts": len(d["stats"]["folders"]), "extracted": d["stats"]["extracted"]}
+
+
+def prev_period(kind: str, start: str, end: str) -> tuple[str, str]:
+    s, e = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+    if kind == "month":
+        pe = s - dt.timedelta(days=1)
+        ps = pe.replace(day=1)
+        return ps.isoformat(), min(pe, ps + (e - s)).isoformat()
+    return (s - dt.timedelta(days=7)).isoformat(), (e - dt.timedelta(days=7)).isoformat()
+
+
+def periods(u: dict, kind: str) -> list[dict]:
+    """可以生成的期：最近 8 周 / 6 个月（含本期至今），每期有几场会、是否已有报告。不调大模型"""
+    today = _now().date()
+    out = []
+    if kind == "week":
+        mon = today - dt.timedelta(days=today.weekday())
+        spans = [(mon, today)] + [(mon - dt.timedelta(weeks=i), mon - dt.timedelta(weeks=i) + dt.timedelta(days=6)) for i in range(1, 9)]
+    else:
+        first = today.replace(day=1)
+        spans = [(first, today)]
+        cur = first
+        for _ in range(6):
+            pe = cur - dt.timedelta(days=1)
+            cur = pe.replace(day=1)
+            spans.append((cur, pe))
+    for s, e in spans:
+        if e.isoformat() < "2026-08-14" and kind == "week":
+            continue
+        st = collect("all", s.isoformat(), e.isoformat())["stats"]
+        has = db.q1("SELECT id, created_at FROM report WHERE kind = ? AND scope = 'all' AND period_start = ? AND period_end = ?", (kind, s.isoformat(), e.isoformat()))
+        out.append({"start": s.isoformat(), "end": e.isoformat(), "label": label(kind, s.isoformat(), e.isoformat()),
+                    "meetings": st["meetings"], "extracted": st["extracted"], "current": e == today,
+                    "report_id": has["id"] if has else None, "report_at": has["created_at"] if has else None})
+    return out
 
 
 def get_report(u: dict, rid: int) -> dict:
@@ -176,6 +243,12 @@ def get_report(u: dict, rid: int) -> dict:
         for m in db.q(f"SELECT m.id, m.title, m.start_time FROM meeting m WHERE m.id IN ({','.join('?' for _ in ids)}) AND {cond}", (*ids, *params)):
             refs[m["id"]] = {"title": m["title"], "date": (m["start_time"] or "")[:10]}
     r["refs"] = refs
+    r["label"] = label(r["kind"], r["period_start"], r["period_end"])
+    r["versions"] = {x["scope"]: x["id"] for x in db.q("SELECT id, scope FROM report WHERE kind = ? AND period_start = ? AND period_end = ?",
+                                                      (r["kind"], r["period_start"], r["period_end"])) if x["scope"] in visible_scopes(u)}
+    ps, pe = prev_period(r["kind"], r["period_start"], r["period_end"])
+    r["now"] = _counts(r["scope"], r["period_start"], r["period_end"])
+    r["prev"] = {**_counts(r["scope"], ps, pe), "start": ps, "end": pe}
     return r
 
 
@@ -190,6 +263,8 @@ def job_state() -> dict:
 def run_async(kind: str, start: str, end: str, by: str, scopes=("all", "biz")):
     if _lock.locked():
         raise RuntimeError("正在生成报告，请稍等")
+    if not collect("all", start, end)["meetings"]:
+        raise RuntimeError(f"{start} ~ {end} 没有会议记录，不用生成（可能还没导入这段时间的听记）")
 
     def go():
         with _lock:
@@ -234,3 +309,43 @@ def scheduler():
                 _job.update(running=False, error=f"自动生成失败：{str(e)[:200]}")
             time.sleep(3600)
     threading.Thread(target=loop, daemon=True).start()
+
+
+# ---------------------------------------------------------------- 导出 Word
+def report_docx(u: dict, rid: int) -> tuple[str, bytes]:
+    import io
+    import re
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from . import exporter
+    r = get_report(u, rid)
+    doc = Document()
+    exporter._font(doc)
+    doc.add_heading(f"{'周报' if r['kind'] == 'week' else '月报'} · {r['label']}", level=0)
+    p = doc.add_paragraph()
+    run = p.add_run(f"{r['period_start']} ~ {r['period_end']} · {SCOPES[r['scope']]} · 生成于 {r['created_at']}")
+    run.font.size = Pt(9); run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    n, pv = r["now"], r["prev"]
+    doc.add_paragraph(f"会议 {n['meetings']} 场（上期 {pv['meetings']}） · 决议 {n['decisions']} 项 · 风险问题 {n['risks']} 条 · 涉及 {n['depts']} 个部门")
+    order = []
+    def cite(m):
+        i = int(m[1])
+        if i not in r["refs"]:
+            return ""
+        if i not in order:
+            order.append(i)
+        return f"[{order.index(i) + 1}]"
+    body = re.sub(r"\s*\[M(\d+)\]", lambda m: cite(m), r["content"] or "")
+    exporter._md(doc, body)
+    if order:
+        doc.add_heading("引用的会议", level=2)
+        for k, i in enumerate(order, 1):
+            q = doc.add_paragraph(f"[{k}] {r['refs'][i]['date']} {r['refs'][i]['title']}")
+            for x in q.runs:
+                x.font.size = Pt(9)
+    note = doc.add_paragraph("经营数字来自会议发言，未经财务核实。")
+    for x in note.runs:
+        x.font.size = Pt(9); x.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    buf = io.BytesIO(); doc.save(buf)
+    name = f"{'周报' if r['kind'] == 'week' else '月报'}_{r['period_start']}_{r['period_end']}_{SCOPES[r['scope']]}.docx"
+    return name, buf.getvalue()

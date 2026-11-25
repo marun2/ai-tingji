@@ -730,53 +730,110 @@
     drawIssues();
   }
 
-  // ------------------------------------------------------------ 周报月报
-  const REP = { cur: null };
+  // ------------------------------------------------------------ 周报月报（2026-11-25 重做，docs/周报月报.md）
+  // 一期一条（全公司版 / 研发市场销售版在报告里切换）；没有会议的期不生成；生成前告诉管理员要花大模型用量
+  const REP = { cur: null, gen: false, genKind: "week" };
+  const repRead = (() => { try { return new Set(JSON.parse(localStorage.getItem("tj.rep.read") || "[]")); } catch (e) { return new Set(); } })();
+  const markRead = (id) => { repRead.add(id); try { localStorage.setItem("tj.rep.read", JSON.stringify([...repRead].slice(-300))); } catch (e) { /* 忽略 */ } };
+  const dshort = (d) => (d || "").slice(5).replace("-", "/");
   async function renderReports() {
-    app.innerHTML = `<div class="kb rep"><aside class="col tree" id="repList"><div class="muted" style="padding:10px">加载中…</div></aside><section class="col preview" id="repView"></section></div>`;
+    app.innerHTML = `<div class="kb rep2"><aside class="col tree" id="repList"><div class="muted" style="padding:10px">加载中…</div></aside><section class="col preview" id="repView"></section></div>`;
     let r; try { r = await api("api/reports"); } catch (e) { $("#repList").textContent = e.message; return; }
+    REP.list = r;
     const el = $("#repList");
-    let h = "";
-    if (r.can_generate) h += `<div class="gen"><div class="muted" style="font-size:12px;margin:0 4px 6px">生成报告</div>
-      <div class="gen-btns"><button class="btn sm" data-k="week" data-w="last">上周周报</button><button class="btn sm" data-k="week" data-w="current">本周至今</button>
-      <button class="btn sm" data-k="month" data-w="last">上月月报</button><button class="btn sm" data-k="month" data-w="current">本月至今</button></div>
-      <div class="muted" id="repJob" style="font-size:12px;margin:6px 4px 0">${r.job.running ? "生成中：" + esc(r.job.detail) : r.job.error ? "出错：" + esc(r.job.error) : "每周一、每月 1 号早上自动生成"}</div></div>`;
-    const groups = { week: "周报", month: "月报" };
-    for (const k of ["week", "month"]) {
+    let h = r.can_generate ? `<button class="btn primary rep-genbtn" id="repGen">生成报告</button>
+      <div class="rep-job" id="repJob">${r.job.running ? `<span class="dots"><i></i><i></i><i></i></span>${esc(r.job.detail)}` : r.job.error ? `<span class="bad">出错：${esc(r.job.error)}</span>` : "每周一、每月 1 号早上自动生成上一期"}</div>` : "";
+    for (const [k, name] of [["week", "周报"], ["month", "月报"]]) {
       const items = r.items.filter((x) => x.kind === k);
-      h += `<h4>${groups[k]}</h4>`;
-      if (!items.length) h += `<div class="muted" style="padding:2px 10px 8px;font-size:12.5px">还没有</div>`;
-      for (const x of items) h += `<div class="node ${REP.cur === x.id ? "on" : ""}" data-id="${x.id}"><span class="ico"></span><span>${esc(x.period_start.slice(5))} ~ ${esc(x.period_end.slice(5))}</span><span class="n">${r.scopes[x.scope] === "全公司版" ? "全公司" : "研发市场销售"}</span></div>`;
+      h += `<h4>${name}</h4>`;
+      if (!items.length) h += `<div class="muted rep-none">还没有</div>`;
+      for (const x of items) {
+        const ids = Object.values(x.versions), on = ids.includes(REP.cur), unread = !ids.some((i) => repRead.has(i));
+        h += `<div class="rep-item ${on ? "on" : ""}" data-id="${x.versions.all || x.versions.biz}">
+          <div class="ri-t">${unread ? '<i class="ri-new"></i>' : ""}${esc(x.label)}</div>
+          <div class="ri-m">${dshort(x.period_start)} ~ ${dshort(x.period_end)} · ${x.meetings} 场会</div></div>`;
+      }
     }
     el.innerHTML = h;
-    $$(".node", el).forEach((n) => n.onclick = () => openReport(+n.dataset.id));
-    $$(".gen-btns .btn", el).forEach((b) => b.onclick = async () => {
-      try { const x = await api("api/reports/generate", { method: "POST", json: { kind: b.dataset.k, which: b.dataset.w } }); toast(`开始生成 ${x.start} ~ ${x.end}，大约一两分钟`); setTimeout(renderReports, 4000); }
+    $$(".rep-item", el).forEach((n) => n.onclick = () => openReport(+n.dataset.id));
+    const g = $("#repGen"); if (g) g.onclick = () => openGenerator();
+    if (r.job.running) setTimeout(() => { if (S.view === "reports" && !REP.gen) refreshJob(); }, 4000);
+    if (REP.gen) return openGenerator();
+    const first = REP.cur && r.items.some((x) => Object.values(x.versions).includes(REP.cur)) ? REP.cur : (r.items[0] && (r.items[0].versions.all || r.items[0].versions.biz));
+    if (first) openReport(first);
+    else $("#repView").innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>还没有报告。${r.can_generate ? "点左上角「生成报告」，或者等每周一早上自动生成。" : "每周一早上会自动生成上一周的周报。"}</div></div>`;
+  }
+  async function refreshJob() {
+    let r; try { r = await api("api/reports"); } catch (e) { return; }
+    const j = $("#repJob"); if (!j) return;
+    if (r.job.running) { j.innerHTML = `<span class="dots"><i></i><i></i><i></i></span>${esc(r.job.detail)}`; setTimeout(() => { if (S.view === "reports") refreshJob(); }, 4000); }
+    else { REP.gen = false; renderReports(); if (r.job.error) toast(r.job.error, true); else toast("报告生成好了"); }
+  }
+
+  async function openGenerator() {
+    REP.gen = true; REP.cur = null;
+    $$(".rep-item").forEach((n) => n.classList.remove("on"));
+    const el = $("#repView"); el.innerHTML = `<div class="empty-state muted">加载中…</div>`;
+    let r; try { r = await api("api/reports/periods?kind=" + REP.genKind); } catch (e) { el.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+    const est = (n) => Math.max(1, Math.round(n * 0.08 + 0.6));   // 粗估：每场会的抽取信息约 600～800 字，加上写报告
+    el.innerHTML = `<div class="rep-doc"><div class="rep-kicker">生成报告</div><h1>选择要生成的一期</h1>
+      <p class="muted">每次生成会调用一次大模型（两个版本各一次），按会议多少大约消耗几万 tokens，一两分钟生成完。没有会议的期不用生成。</p>
+      <div class="subnav" id="gkind"><button data-k="week" class="${REP.genKind === "week" ? "on" : ""}">周报</button><button data-k="month" class="${REP.genKind === "month" ? "on" : ""}">月报</button></div>
+      <div class="gp-list">${r.items.map((p, i) => `<div class="gp ${p.meetings ? "" : "off"}">
+        <div class="gp-t"><b>${esc(p.label)}</b><span>${p.start} ~ ${p.end}</span></div>
+        <div class="gp-m">${p.meetings ? `${p.meetings} 场会${p.extracted < p.meetings ? `<small>（${p.meetings - p.extracted} 场还没整理）</small>` : ""}` : "没有会议"}</div>
+        <div class="gp-s">${p.report_id ? `已生成 · ${esc((p.report_at || "").slice(5, 16))}` : p.current ? "本期还没结束" : ""}</div>
+        <div class="gp-a">${p.report_id ? `<button class="btn sm" data-open="${p.report_id}">查看</button>` : ""}${p.meetings ? `<button class="btn sm ${p.report_id ? "" : "primary"}" data-gen="${i}">${p.report_id ? "重新生成" : "生成"}<small>约 ${est(p.meetings)} 万 tokens</small></button>` : ""}</div></div>`).join("")}</div></div>`;
+    $$("#gkind button").forEach((b) => b.onclick = () => { REP.genKind = b.dataset.k; openGenerator(); });
+    $$("[data-open]", el).forEach((b) => b.onclick = () => { REP.gen = false; openReport(+b.dataset.open); });
+    $$("[data-gen]", el).forEach((b) => b.onclick = async () => {
+      const p = r.items[+b.dataset.gen];
+      if (p.report_id && !(await ask(`重新生成「${p.label}」？`, "会覆盖原来的报告，并再消耗一次大模型用量。", "重新生成"))) return;
+      try { await api("api/reports/generate", { method: "POST", json: { kind: REP.genKind, start: p.start, end: p.end } }); toast(`开始生成「${p.label}」，大约一两分钟`); REP.gen = false; renderReports().then(refreshJob); }
       catch (e) { toast(e.message, true); }
     });
-    if (r.job.running) setTimeout(() => { if (S.view === "reports") renderReports(); }, 5000);
-    const first = REP.cur && r.items.find((x) => x.id === REP.cur) ? REP.cur : (r.items[0] && r.items[0].id);
-    if (first) openReport(first); else $("#repView").innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>还没有报告${r.can_generate ? "，点左上角生成一份试试" : ""}</div></div>`;
   }
+
   async function openReport(id) {
-    REP.cur = id;
-    $$("#repList .node").forEach((n) => n.classList.toggle("on", +n.dataset.id === id));
+    REP.cur = id; REP.gen = false;
+    $$("#repList .rep-item").forEach((n) => { const it = REP.list.items.find((x) => Object.values(x.versions).includes(id)); n.classList.toggle("on", !!it && Object.values(it.versions).includes(+n.dataset.id)); });
     const el = $("#repView"); el.innerHTML = `<div class="empty-state muted">加载中…</div>`;
     let r; try { r = await api("api/reports/" + id); } catch (e) { el.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
-    const st = r.stats || {};
+    markRead(id); $$("#repList .rep-item.on .ri-new").forEach((x) => x.remove());
+    const st = r.stats || {}, n = r.now, pv = r.prev;
+    const dl = (a, b) => { const d = a - b; return d === 0 ? `<span class="dlt">持平</span>` : `<span class="dlt ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`; };
+    const kpi = (v, l, p) => `<div class="rk"><b>${v}</b><span>${l}${p != null ? dl(v, p) : ""}</span></div>`;
+    // 出处：按出现顺序编号成 ¹ ² ³，文末列出引用的会议
+    const order = [];
+    let body = md(r.content || "").replace(/\s*\[M(\d+)\]/g, (m0, k) => { if (!r.refs[k]) return ""; let i = order.indexOf(k); if (i < 0) { order.push(k); i = order.length - 1; } return `<sup class="cite2" data-m="${k}" title="${esc(r.refs[k].date)} ${esc(r.refs[k].title)}">${i + 1}</sup>`; });
     const fmax = Math.max(1, ...Object.values(st.folders || {}));
-    const bars = Object.entries(st.folders || {}).map(([k, v]) => `<div class="bar"><span class="bl">${esc(k)}</span><span class="bt"><i style="width:${v / fmax * 100}%"></i></span><span class="bv">${v}</span></div>`).join("");
-    const topics = (st.topics || []).map(([t, n]) => `<span class="tag biz">${esc(t)} ${n}</span>`).join("");
-    const ent = (st.entities || {});
-    const entHtml = ["客户", "平台", "竞品", "产品"].filter((k) => (ent[k] || []).length).map((k) => `<div class="ent"><b>${k}</b>${ent[k].map(([t, n]) => `<span class="tag">${esc(t)} ${n}</span>`).join("")}</div>`).join("");
-    const body = md(r.content || "").replace(/\[M(\d+)\]/g, (m0, n) => r.refs[n] ? `<a class="cite" data-m="${n}" title="${esc(r.refs[n].title)} ${esc(r.refs[n].date)}">会</a>` : "");
-    el.innerHTML = `<div class="doc report"><div class="rep-head"><div><h1 class="dt">${esc(r.title)}</h1><div class="muted" style="font-size:12.5px">生成于 ${esc(r.created_at)} · ${esc(r.created_by || "")}</div></div></div>
-      <div class="rep-cards"><div class="kpi"><div class="kn">${st.meetings || 0}</div><div class="kl">场会议</div></div>
-        <div class="kpi wide"><div class="kl">各文件夹</div>${bars || '<span class="muted">—</span>'}</div>
-        <div class="kpi wide"><div class="kl">热门话题</div><div class="tags">${topics || '<span class="muted">—</span>'}</div>${entHtml}</div></div>
-      <div class="md rep-body">${body}</div>
-      <p class="muted" style="font-size:12px;margin-top:20px">经营数字来自会议发言，未经财务核实。点<span class="cite" style="cursor:default">会</span>可以打开对应的会议。</p></div>`;
-    $$(".cite[data-m]", el).forEach((c) => c.onclick = () => openMeetingModal(+c.dataset.m));
+    const ent = st.entities || {};
+    const chips = (arr, type) => arr.map(([t, c]) => `<span class="cb-chip">${type ? shapeIcon(type) : ""}${esc(t)}<small>${c}</small></span>`).join("");
+    const vers = Object.entries(r.versions || {});
+    el.innerHTML = `<div class="rep-doc">
+      <div class="rep-top"><div><div class="rep-kicker">${r.kind === "week" ? "周报" : "月报"} · ${r.period_start} ~ ${r.period_end}</div>
+        <h1>${esc(r.label)}${r.kind === "week" ? "经营周报" : "经营月报"}</h1>
+        <div class="muted rep-meta">${r.created_by === "自动" ? "自动生成" : "由 " + esc(r.created_by || "") + " 生成"} · ${esc((r.created_at || "").slice(0, 16))}</div></div>
+        <div class="rep-act">${vers.length > 1 ? `<div class="subnav">${[["all", "全公司版"], ["biz", "研发市场销售版"]].filter(([k]) => r.versions[k]).map(([k, l]) => `<button data-v="${r.versions[k]}" class="${r.scope === k ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}
+          <a class="btn sm" href="api/reports/${r.id}/docx">导出 Word</a><button class="btn sm" id="repCopy">复制文字</button></div></div>
+      <div class="rep-kpis">${kpi(n.meetings, "场会议", pv.meetings)}${kpi(n.decisions, "项决议", pv.decisions)}${kpi(n.risks, "条风险问题", pv.risks)}${r.scope === "all" ? kpi(n.depts, "个部门", pv.depts) : kpi(n.metrics, "个经营数字", pv.metrics)}
+        <div class="rk-note">和上一期（${dshort(pv.start)} ~ ${dshort(pv.end)}）比</div></div>
+      ${n.extracted < n.meetings ? `<div class="flag warn rep-warn">这一期有 ${n.meetings - n.extracted} 场会还没整理信息，报告里没有包含它们</div>` : ""}
+      <div class="rep-grid"><article class="md rep-body2" id="repBody">${body}
+        ${order.length ? `<h2 class="refs-h">引用的会议</h2><ol class="refs">${order.map((k) => `<li data-m="${k}"><span>${dshort(r.refs[k].date)}</span>${esc(r.refs[k].title)}</li>`).join("")}</ol>` : ""}
+        <p class="muted rep-foot">经营数字来自会议发言，未经财务核实。点上标数字或下面的会议可以看原会议。</p></article>
+      <aside class="rep-rail"><div class="rr-box" id="repToc"></div>
+        ${r.scope === "all" && Object.keys(st.folders || {}).length ? `<div class="rr-box"><div class="rr-h">各部门会议</div>${Object.entries(st.folders).map(([k, v]) => `<div class="rr-bar"><span>${esc(k)}</span><i><b style="width:${v / fmax * 100}%"></b></i><em>${v}</em></div>`).join("")}</div>` : ""}
+        ${(st.topics || []).length ? `<div class="rr-box"><div class="rr-h">热门话题</div><div class="cb-chips">${chips(st.topics.slice(0, 10), "话题")}</div></div>` : ""}
+        ${["客户", "平台", "竞品", "产品"].filter((k) => (ent[k] || []).length).map((k) => `<div class="rr-box"><div class="rr-h">${k}</div><div class="cb-chips">${chips(ent[k].slice(0, 8), k)}</div></div>`).join("")}
+      </aside></div></div>`;
+    // 目录
+    const hs = $$("#repBody h2:not(.refs-h)");
+    $("#repToc").innerHTML = hs.length ? `<div class="rr-h">目录</div>` + hs.map((h, i) => { h.id = "rs" + i; return `<a data-t="rs${i}">${esc(h.textContent.replace(/^[一二三四五六七八九十]+、/, ""))}</a>`; }).join("") : "";
+    $$("#repToc a").forEach((a) => a.onclick = () => document.getElementById(a.dataset.t).scrollIntoView({ behavior: "smooth", block: "start" }));
+    $$("[data-v]", el).forEach((b) => b.onclick = () => openReport(+b.dataset.v));
+    $$(".cite2, .refs li", el).forEach((c) => c.onclick = () => openMeetingModal(+c.dataset.m));
+    $("#repCopy").onclick = async () => { try { await navigator.clipboard.writeText(`${r.label}${r.kind === "week" ? "经营周报" : "经营月报"}（${r.period_start} ~ ${r.period_end}）\n\n` + (r.content || "").replace(/\s*\[M\d+\]/g, "")); toast("已复制，可以直接粘贴到飞书"); } catch (e) { toast("复制失败，请用导出 Word", true); } };
   }
 
   // ------------------------------------------------------------ 管理
