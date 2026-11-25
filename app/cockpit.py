@@ -176,6 +176,7 @@ def card_momentum(c: Ctx) -> dict:
     w, a = c.scope(base_start.isoformat(), c.p["end"])
     nodes, _f, times = _facts(w, a)
     recent, before = collections.Counter(), collections.Counter()
+    rmids = collections.defaultdict(list)
     weeks = 8
     spark = collections.defaultdict(lambda: [0] * weeks)
     wk_end = e
@@ -183,6 +184,8 @@ def card_momentum(c: Ctx) -> dict:
         d = dt.date.fromisoformat(t[:10])
         for nd in nodes.get(mid, ()):
             (recent if d >= s else before)[nd] += 1
+            if d >= s:
+                rmids[nd].append((t, mid))
             i = weeks - 1 - (wk_end - d).days // 7
             if 0 <= i < weeks:
                 spark[nd][i] += 1
@@ -196,7 +199,14 @@ def card_momentum(c: Ctx) -> dict:
             down.append({**item, "lift": round((r + 1) / (b + 1), 2)})
     up.sort(key=lambda x: (-x["lift"], -x["recent"]))
     down.sort(key=lambda x: (x["lift"], -x["before"]))
-    return {"title": "热度变化", "desc": f"和之前 {n * 4} 天的平均水平比", "up": up[:8], "down": down[:5]}
+    up, down = up[:8], down[:5]
+    # 每行带上这一期提到它的会（点开就能看，不调大模型）
+    want = {mid for x in up + down for _t, mid in sorted(rmids[(x["type"], x["name"])], reverse=True)[:6]}
+    titles = {r["id"]: r for r in db.q(f"SELECT id, title, start_time FROM meeting WHERE id IN ({','.join('?' * len(want))})", list(want))} if want else {}
+    for x in up + down:
+        x["sources"] = [{"id": mid, "title": titles[mid]["title"], "date": (titles[mid]["start_time"] or "")[:10]}
+                        for _t, mid in sorted(rmids[(x["type"], x["name"])], reverse=True)[:6] if mid in titles]
+    return {"title": "热度变化", "desc": f"和之前 {n * 4} 天的平均水平比", "up": up, "down": down}
 
 
 def card_pulse(c: Ctx) -> dict:

@@ -419,7 +419,6 @@
   // 卡片由后端 cockpit.CARDS 决定顺序，这里按 key 找渲染函数；以后加卡片两边各加一个函数
   const CK = { period: "14d", folder: "" };
   const ckTrack = (card, action) => api("api/insights/track", { method: "POST", json: { card, action } }).catch(() => {});
-  const ckAsk = (card, q) => { ckTrack(card, "ask"); go("ask"); setTimeout(() => sendAsk(q), 50); };
   const mmdd = (d) => (d || "").slice(5, 10);
   const spark = (arr) => { const mx = Math.max(1, ...arr); return `<svg class="spark" viewBox="0 0 ${arr.length * 7} 20">${arr.map((v, i) => `<rect x="${i * 7}" y="${20 - Math.max(1.5, v / mx * 20)}" width="5" height="${Math.max(1.5, v / mx * 20)}" rx="1" fill="${i === arr.length - 1 ? "currentColor" : "#d9dde8"}"/>`).join("")}</svg>`; };
   const deltaTag = (n, p) => { const d = n - p; return d === 0 ? `<span class="dlt">持平</span>` : `<span class="dlt ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`; };
@@ -433,16 +432,18 @@
       return c.items.map((x, i) => `<div class="att">
         <div class="att-top"><span class="st ${x.status === "持续" ? "keep" : "new"}">${x.status === "持续" ? "持续 · 自 " + mmdd(x.since) : "新出现"}</span><span class="att-meta">${x.meetings} 场会提到${x.folders.length ? " · " + x.folders.map(esc).join("、") : ""} · 最近 ${mmdd(x.last)}</span></div>
         <div class="att-t">${esc(x.text)}</div>
-        <div class="att-act"><button class="lk" data-src="${i}">看原会议（${x.sources.length}）</button><button class="lk" data-ask="${i}">追问</button></div>
+        <div class="att-act"><button class="lk" data-src="${i}">看原会议（${x.sources.length}）</button></div>
         <div class="att-src" id="attSrc${i}" hidden>${x.sources.map(srcLine).join("")}</div></div>`).join("") +
         (c.total > c.items.length ? `<div class="ck-more">另有 ${c.total - c.items.length} 条只在单场会里提过，可在知识库里搜</div>` : "");
     },
     momentum(c) {
-      const row = (x, dir) => `<div class="mo" data-name="${esc(x.name)}">${shapeIcon(x.type)}<span class="mo-n">${esc(x.name)}</span><span class="mo-t">${x.type}</span><span class="mo-s" style="color:${dir === "up" ? "#e0505a" : "#3b9ae1"}">${spark(x.spark)}</span><span class="mo-v">${x.before} → <b>${x.recent}</b></span></div>`;
+      let k = 0;
+      const row = (x, dir) => { const i = k++; return `<div class="mo" data-mo="${i}">${shapeIcon(x.type)}<span class="mo-n">${esc(x.name)}</span><span class="mo-t">${x.type}</span><span class="mo-s" style="color:${dir === "up" ? "#e0505a" : "#3b9ae1"}">${spark(x.spark)}</span><span class="mo-v">${x.before} → <b>${x.recent}</b></span></div>
+        <div class="att-src mo-src" id="moSrc${i}" hidden>${x.sources.length ? x.sources.map(srcLine).join("") : '<div class="ck-src">这一期没有提到</div>'}</div>`; };
       if (!c.up.length && !c.down.length) return ckEmpty("和之前比没有明显变化");
       return `<div class="mo-h">升温<span>这一期提得明显更多</span></div>${c.up.map((x) => row(x, "up")).join("") || ckEmpty("没有")}
         ${c.down.length ? `<div class="mo-h" style="margin-top:12px">降温<span>以前常提、这一期几乎没提</span></div>${c.down.map((x) => row(x, "down")).join("")}` : ""}
-        <div class="ck-more">数字是“平均每期场次 → 这一期场次”，点一行可以追问</div>`;
+        <div class="ck-more">数字是“平均每期场次 → 这一期场次”，点一行看是哪几场会</div>`;
     },
     decisions(c) {
       if (!c.groups.length) return ckEmpty("这段时间会上没有记录到明确的决议");
@@ -496,10 +497,8 @@
         <div class="ck-cb">${c.error ? ckEmpty(esc(c.error)) : (COCKPIT_CARDS[c.key] ? COCKPIT_CARDS[c.key](c) : "")}</div></section>`).join("")}</div></div>`;
     // 交互：点开会议 / 追问 / 部门下钻，并记点击（只记卡片和动作，不记人）
     $$("[data-m]", el).forEach((x) => x.onclick = () => { ckTrack(x.closest("[data-card]").dataset.card, "open"); openMeetingModal(+x.dataset.m); });
-    const att = d.cards.find((c) => c.key === "attention");
-    $$("[data-src]", el).forEach((b) => b.onclick = () => { const box = $("#attSrc" + b.dataset.src); box.hidden = !box.hidden; if (!box.hidden) ckTrack("attention", "expand"); });
-    $$("[data-ask]", el).forEach((b) => b.onclick = () => ckAsk("attention", `关于“${att.items[+b.dataset.ask].text}”，会上具体是怎么说的？原因是什么、谁在跟进、有没有定解决办法？`));
-    $$(".mo", el).forEach((r) => r.onclick = () => ckAsk("momentum", `最近会议里关于「${r.dataset.name}」都讨论了什么？和之前比有什么变化？`));
+        $$("[data-src]", el).forEach((b) => b.onclick = () => { const box = $("#attSrc" + b.dataset.src); box.hidden = !box.hidden; if (!box.hidden) ckTrack("attention", "expand"); });
+    $$(".mo", el).forEach((r) => r.onclick = () => { const box = $("#moSrc" + r.dataset.mo); box.hidden = !box.hidden; if (!box.hidden) ckTrack("momentum", "expand"); });
     $$(".pl.click", el).forEach((p) => p.onclick = () => { CK.folder = p.dataset.f; ckTrack("pulse", "drill"); insCockpit(); el.scrollTop = 0; });
     const all = $("#ckAll"); if (all) all.onclick = () => { CK.folder = ""; insCockpit(); };
     const pend = $("#ckPend"); if (pend) pend.onclick = () => { S.sel = { folder: "", month: "", pending: true }; go("kb"); };
@@ -521,7 +520,7 @@
           <div class="tf-row"><span>并到</span><input id="tfInto" placeholder="另一个词的标准写法，如 味动力"><button class="btn sm" id="tfMerge">合并</button></div>
           <div class="tf-row"><button class="btn sm" id="tfHide">不在图谱和报告里显示</button></div></div>` : "";
       side.innerHTML = `<div class="gs-h">${shapeIcon(n.type)}${esc(n.name)}<span class="muted">${n.type} · ${n.count} 场</span></div>` +
-        `<button class="btn sm" id="gAsk" style="margin:4px 0 10px">问问关于「${esc(n.name)}」</button>` + fixBox +
+        `<button class="btn sm" id="gAsk" style="margin:4px 0 10px">带着「${esc(n.name)}」去提问</button>` + fixBox +
         r.items.map((m) => `<div class="li" data-m="${m.id}"><div>${esc(m.title)}</div><div class="lm">${esc((m.start_time || "").slice(0, 10))}</div></div>`).join("");
       $$(".li", side).forEach((x) => x.onclick = () => openMeetingModal(+x.dataset.m));
       const fixTerm = async (action, target, msg) => { try { await api("api/admin/terms", { method: "POST", json: { name: n.name, action, target } }); toast(msg + "，可在「管理 → 关键词」撤销"); insGraph(); } catch (e) { toast(e.message, true); } };
@@ -530,7 +529,7 @@
         $("#tfHide").onclick = () => fixTerm("hide", "", `「${n.name}」不再显示`);
         $("#tfMerge").onclick = () => { const t = $("#tfInto").value.trim(); if (!t) return toast("先填要并到哪个词", true); fixTerm("merge", t, `「${n.name}」已并到「${t}」`); };
       }
-      $("#gAsk").onclick = () => { go("ask"); setTimeout(() => sendAsk(`最近会议里关于「${n.name}」都讨论了什么？有哪些决定和问题？`), 50); };
+      $("#gAsk").onclick = () => { go("ask"); setTimeout(() => { const i = $("#askInput"); if (i) { i.value = `最近会议里关于「${n.name}」都讨论了什么？有哪些决定和问题？`; i.focus(); i.dispatchEvent(new Event("input")); } toast("问题已填好，确认后点“提问”才会发出"); }, 50); };
     });
   }
   // 力导向布局（自己实现，不依赖外部库）：节点互相排斥、连线像弹簧、整体向中心收拢；一边算一边画，看起来是“动”的
