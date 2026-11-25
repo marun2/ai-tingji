@@ -11,8 +11,13 @@ COPY requirements.txt .
 RUN pip install --default-timeout=20 --retries 3 -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ \
         --trusted-host mirrors.cloud.aliyuncs.com -r requirements.txt \
  || pip install --default-timeout=20 --retries 3 -r requirements.txt
+# OCR 依赖的 opencv 换成不带图形界面的版本（精简镜像里没有 libGL）
+RUN (pip uninstall -y opencv-python >/dev/null 2>&1 || true) \
+ && (pip install --default-timeout=20 --retries 3 -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com opencv-python-headless \
+     || pip install --default-timeout=20 --retries 3 opencv-python-headless) \
+ && python -c "import cv2, pypdfium2; from rapidocr_onnxruntime import RapidOCR"
 COPY app ./app
-# 上传的 Excel 原件在 /app/data（中台部署时挂成持久目录）；会议数据在中台共用的 PostgreSQL
+# 上传的 Excel 原件、会议材料 PDF（/app/data/materials）在 /app/data（中台部署时挂成持久目录）；会议数据在中台共用的 PostgreSQL
 VOLUME ["/app/data"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD python -c "import urllib.request,os;urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/healthz',timeout=4)"

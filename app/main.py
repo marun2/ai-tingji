@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from urllib.parse import quote
 
-from . import access, chunks, cockpit, collab, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
+from . import access, chunks, cockpit, collab, db, materials, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -258,7 +258,8 @@ def _search(u, qtext, folder):
         r.pop("summary")
         r.pop("transcript")
     rows.sort(key=lambda r: (-r["score"], r["start_time"]), reverse=False)
-    return {"items": _attach_folders(rows[:60]), "total": len(rows), "terms": terms[:20]}
+    mats = materials.search_hits(u, groups) if not folder else []
+    return {"items": _attach_folders(rows[:60]), "total": len(rows), "terms": terms[:20], "materials": mats}
 
 
 async def search(req):
@@ -277,7 +278,7 @@ async def import_upload(req):
     if not f or not getattr(f, "filename", ""):
         raise HTTPException(400, "请选择 Excel 文件")
     if not f.filename.lower().endswith((".xlsx", ".xlsm", ".zip", ".gz", ".json")):
-        raise HTTPException(400, "只支持钉钉 AI听记导出的 .xlsx 表格、历史文件夹压缩包（.zip）或历史听记包（.json.gz）")
+        raise HTTPException(400, "这里只收钉钉 AI听记导出的 .xlsx 表格、历史文件夹压缩包（.zip）或历史听记包（.json.gz）；会议 PDF 材料请到「管理 → 会议材料」上传")
     with db.tx() as c:
         bid = db.insert(c, "import_batch", {"filename": f.filename, "uploaded_by": u["name"], "status": "running", "created_at": access.now()})
     UPLOADS.mkdir(parents=True, exist_ok=True)
@@ -555,6 +556,124 @@ async def report_generate(req):
     return ok({"start": s, "end": e})
 
 
+# ---------------------------------------------------------------- 会议材料（PDF）
+MAX_PDF = materials.MAX_MB << 20
+
+
+async def mat_upload(req):
+    """管理员上传 PDF（可一次多个）：存好后后台逐页读文字、匹配会议"""
+    u = await run(user, req)
+    access.require_admin(u)
+    form = await req.form(max_part_size=MAX_PDF, max_files=50)
+    files = [f for f in form.getlist("file") if getattr(f, "filename", "")]
+    if not files:
+        raise HTTPException(400, "请选择 PDF 文件")
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    out = []
+    import shutil
+    import uuid
+    for f in files:
+        if not f.filename.lower().endswith(".pdf"):
+            out.append({"filename": f.filename, "error": "不是 PDF（PPT 请先另存为 PDF）"}); continue
+        tmp = UPLOADS / f"mat-{uuid.uuid4().hex}.pdf"
+        await f.seek(0)
+        with open(tmp, "wb") as o:
+            await run(shutil.copyfileobj, f.file, o, 4 << 20)
+        if tmp.stat().st_size > MAX_PDF:
+            tmp.unlink(missing_ok=True)
+            out.append({"filename": f.filename, "error": f"太大（超过 {materials.MAX_MB}MB）"}); continue
+        with open(tmp, "rb") as chk:
+            if chk.read(5) != b"%PDF-":
+                tmp.unlink(missing_ok=True)
+                out.append({"filename": f.filename, "error": "文件内容不是 PDF"}); continue
+        r = await run(materials.save_upload, str(tmp), f.filename, u["name"])
+        if r["duplicate"]:
+            tmp.unlink(missing_ok=True)
+        out.append(r)
+    audit(u, "上传材料", "、".join(f.filename for f in files)[:300])
+    return ok({"items": out})
+
+
+async def mat_admin(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    return ok(await run(materials.admin_list, req.query_params.get("status") or ""))
+
+
+async def mat_list(req):
+    u = await run(user, req)
+    return ok({"items": await run(materials.list_visible, u, (req.query_params.get("q") or "").strip()[:40])})
+
+
+async def mat_get(req):
+    u = await run(user, req)
+    try:
+        return ok(await run(materials.get, u, int(req.path_params["id"])))
+    except PermissionError as e:
+        raise HTTPException(404, str(e))
+
+
+async def mat_update(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    mid = int(req.path_params["id"])
+    b = await body(req)
+    try:
+        if b.get("delete"):
+            await run(materials.delete, mid); audit(u, "删除材料", str(mid)); return ok({"deleted": True})
+        if b.get("retry"):
+            await run(materials.retry, mid); return ok({})
+        await run(materials.update, mid, b)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(u, "改材料", f"{mid} {json.dumps(b, ensure_ascii=False)[:200]}")
+    return ok(await run(materials.get, u, mid))
+
+
+async def mat_confirm(req):
+    u = await run(user, req)
+    access.require_admin(u)
+    b = await body(req)
+    n = await run(materials.confirm_many, b.get("ids") or [])
+    audit(u, "确认材料", f"{n} 份")
+    return ok({"updated": n})
+
+
+async def mat_meeting_search(req):
+    """给材料挑会议：按标题搜"""
+    u = await run(user, req)
+    access.require_admin(u)
+    q = (req.query_params.get("q") or "").strip()[:40]
+    if not q:
+        return ok({"items": []})
+    rows = await run(db.q, "SELECT id, title, start_time FROM meeting WHERE status <> 'empty' AND title LIKE ? ORDER BY start_time DESC LIMIT 20", (f"%{q}%",))
+    return ok({"items": [{"id": r["id"], "title": r["title"], "date": (r["start_time"] or "")[:10]} for r in rows]})
+
+
+async def mat_page(req):
+    u = await run(user, req)
+    try:
+        data = await run(materials.page_image, u, int(req.path_params["id"]), int(req.path_params["page"]), int(req.query_params.get("w") or 1400))
+    except PermissionError as e:
+        raise HTTPException(404, str(e))
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+async def mat_file(req):
+    u = await run(user, req)
+    try:
+        name, data = await run(materials.original, u, int(req.path_params["id"]))
+    except PermissionError as e:
+        raise HTTPException(404, str(e))
+    disp = "inline" if req.query_params.get("view") else "attachment"
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f"{disp}; filename*=UTF-8''{quote(name)}"})
+
+
+async def meeting_materials(req):
+    u = await run(user, req)
+    return ok({"items": await run(materials.for_meeting, u, int(req.path_params["id"]))})
+
+
 # ---------------------------------------------------------------- 可视化
 def _int(v, default, lo, hi):
     try:
@@ -714,6 +833,7 @@ async def lifespan(_app):
         print("补切文本段失败：", e, flush=True)
     extract.reset_running()
     embed.start()
+    materials.start()
     reports.scheduler()
     yield
 
@@ -721,6 +841,16 @@ async def lifespan(_app):
 routes = [
     Route("/healthz", healthz),
     Route("/api/me", me),
+    Route("/api/materials", mat_list),
+    Route("/api/materials/upload", mat_upload, methods=["POST"]),
+    Route("/api/materials/confirm", mat_confirm, methods=["POST"]),
+    Route("/api/materials/meetings", mat_meeting_search),
+    Route("/api/admin/materials", mat_admin),
+    Route("/api/materials/{id:int}", mat_get),
+    Route("/api/materials/{id:int}", mat_update, methods=["PUT"]),
+    Route("/api/materials/{id:int}/page/{page:int}", mat_page),
+    Route("/api/materials/{id:int}/file", mat_file),
+    Route("/api/meetings/{id:int}/materials", meeting_materials),
     Route("/api/status", status),
     Route("/api/tree", tree),
     Route("/api/meetings", meetings),

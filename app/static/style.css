@@ -638,3 +638,50 @@ select.role, .form-row input { border-color: var(--line-strong); border-radius: 
 .me { margin-top: auto; }
 .me > div:last-child > div:first-child { font-weight: 600; color: #1d1d1f; font-size: 13.5px; }
 @media (max-width: 800px) { .nav-h, .side-fill { display: none; } .nav button { font-size: 14px; padding: 7px 10px; } .search { flex-basis: 100%; } }
+
+/* ---------------- 会议材料（PDF，2026-11-25） ---------------- */
+.node.mats .ico::before { content: ""; display: inline-block; width: 8px; height: 10px; border: 1.5px solid #8e8e93; border-radius: 2px; margin-right: 2px; vertical-align: -1px; }
+.mat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 6px; }
+.mc { border: 1px solid #ecebe8; border-radius: 12px; overflow: hidden; cursor: pointer; background: #fff; transition: box-shadow .15s; }
+.mc:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+.mc img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; display: block; background: #f3f3f1; border-bottom: 1px solid #f0efec; }
+.mc-t { font-size: 13px; font-weight: 600; color: var(--text); padding: 8px 10px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-m { font-size: 12px; color: var(--text-3); padding: 0 10px 9px; }
+.mat-doc { max-width: 980px; }
+.mat-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.mat-act { display: flex; gap: 6px; }
+.mat-jump { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 4px; position: sticky; top: 0; background: #fff; padding: 6px 0; z-index: 2; }
+.mat-jump button { border: 1px solid #ecebe8; background: #fff; border-radius: 6px; min-width: 28px; height: 24px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.mat-jump button:hover { border-color: #4f63d9; color: #4f63d9; }
+.mp { margin: 14px 0 22px; scroll-margin-top: 44px; }
+.mp-n { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.mp-n span { font-weight: 400; color: var(--text-3); margin-left: 8px; }
+.mp img { width: 100%; border: 1px solid #ecebe8; border-radius: 8px; display: block; background: #f8f8f7; min-height: 120px; }
+.mp details { margin-top: 6px; }
+.mp summary { font-size: 12.5px; color: #3c4fc4; cursor: pointer; }
+.mp-t { white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--text-2); background: #f8f8f7; border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
+.mat-modal { width: min(1040px, 96vw) !important; max-height: 92vh; overflow: auto; }
+.dm-mats { font-size: 13px; color: var(--text-3); margin: 8px 0 2px; }
+.mat-hits { border-bottom: 1px solid var(--line); background: #fafaf9; }
+.mh-h { font-size: 12px; color: var(--text-3); padding: 10px 16px 2px; }
+.mh { padding: 10px 16px; cursor: pointer; border-top: 1px solid #f1f0ed; }
+.mh:first-of-type { border-top: 0; }
+.mh:hover { background: #f3f3f1; }
+.mat-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.mat-bar .subnav { margin: 0; }
+.mat-bar #matConfirm { margin-left: auto; }
+.mr { border-top: 1px solid #f1f0ed; padding: 12px 2px; }
+.mr-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.mr-f { font-size: 14px; font-weight: 600; color: var(--text) !important; }
+.mr-where { font-size: 13px; color: var(--text-2); margin: 6px 0 0 26px; }
+.mr-act { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 0 26px; position: relative; }
+.mr-act select, .mr-act input.mr-q { font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-width: 280px; }
+.mr-s { font-size: 12.5px; color: var(--text-2); display: inline-flex; gap: 4px; align-items: center; }
+.mr-res { position: relative; }
+.mr-pick { position: absolute; z-index: 5; top: 4px; left: -200px; width: 380px; max-height: 260px; overflow: auto; background: #fff; border: 1px solid #ecebe8; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.mr-pick div { padding: 7px 12px; font-size: 12.5px; cursor: pointer; border-bottom: 1px solid #f5f4f1; }
+.mr-pick div:hover { background: #f6f7fd; }
+.warn { color: #b26a00; }
+.mh .title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.mh .meta { display: flex; gap: 10px; font-size: 12px; color: var(--text-3); margin: 3px 0; }
+.mh .snip { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }

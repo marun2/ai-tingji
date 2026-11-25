@@ -280,6 +280,58 @@ def main():
     except RuntimeError:
         check(True, "没有会议的期不生成")
 
+    print("会议材料（PDF）")
+    from app import materials, qa as _qa
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from _testpdf import text_pdf
+    pdf1 = pathlib.Path(TMP) / "u1.pdf"
+    pdf1.write_bytes(text_pdf(["Yulu sanqu CNY review\nTarget 85 percent payback", "Zebrafish channel plan 2027\nBudget 1200"]))
+    r1 = materials.save_upload(str(pdf1), "11-18 豫鲁三区生意回顾与CNY规划.pdf", "smoke")
+    check(not r1["duplicate"] and db.q1("SELECT doc_date FROM material WHERE id = ?", (r1["id"],))["doc_date"].endswith("-11-18"), "上传 PDF：从文件名认出日期")
+    pdf1b = pathlib.Path(TMP) / "u1b.pdf"
+    pdf1b.write_bytes(materials._path(r1["id"]).read_bytes())
+    check(materials.save_upload(str(pdf1b), "重复.pdf", "smoke")["duplicate"], "同一个 PDF 再传会跳过")
+    materials.process(r1["id"])
+    mt = db.q1("SELECT * FROM material WHERE id = ?", (r1["id"],))
+    pages = db.q("SELECT * FROM material_page WHERE material_id = ? ORDER BY page_no", (r1["id"],))
+    check(mt["status"] == "ok" and mt["pages"] == 2 and "Zebrafish" in pages[1]["text"], "逐页读出 PDF 文字")
+    check(mt["meeting_id"] == m_biz and mt["match_status"] == "pending", "按日期和标题自动挂到对应的会（待核对）")
+    check(db.q1("SELECT COUNT(*) AS n FROM chunk WHERE meeting_id = ?", (-r1["id"],))["n"] >= 2, "材料按页切成检索文本段")
+    check(not materials.can_view(lead, r1["id"]) and materials.can_view(board, r1["id"]), "没确认的材料部门负责人看不到")
+    materials.update(r1["id"], {"confirm": True})
+    check(materials.can_view(lead, r1["id"]) and any(x["id"] == r1["id"] for x in materials.for_meeting(lead, m_biz)), "确认后跟着会议的权限走，负责人能看到")
+    hits = _qa.retrieve(lead, "Zebrafish", "", {"keywords": ["Zebrafish"], "rewrite": "Zebrafish", "date_from": None, "date_to": None})
+    check(any(h["kind"] == "material" and h["seq"] == 2 for h in hits), "提问能检索到材料里的内容（带页码）")
+    check(any(x["id"] == r1["id"] and 2 in x["pages"] for x in materials.search_hits(lead, [["Zebrafish"]])), "顶部搜索能搜到材料")
+    check(len(materials.page_image(lead, r1["id"], 1, 320)) > 1000, "能渲染材料页面图片")
+    materials.update(r1["id"], {"meeting_id": m_int})
+    check(not materials.can_view(lead, r1["id"]), "挂到负责人看不到的会（面试）后，材料也看不到")
+    materials.update(r1["id"], {"meeting_id": None, "folder": "财务"})
+    check(not materials.can_view(lead, r1["id"]) and materials.can_view(board, r1["id"]), "不挂会、放进财务：负责人看不到")
+    materials.update(r1["id"], {"folder": rules.BIZ, "sensitive": True})
+    check(not materials.can_view(lead, r1["id"]), "标成敏感后负责人看不到")
+    pdf2 = pathlib.Path(TMP) / "u2.pdf"
+    pdf2.write_bytes(text_pdf(["Quarterly HR training plan"]))
+    r2 = materials.save_upload(str(pdf2), "培训计划.pdf", "smoke")
+    materials.process(r2["id"])
+    m2 = db.q1("SELECT meeting_id, folder FROM material WHERE id = ?", (r2["id"],))
+    check(m2["meeting_id"] is None and m2["folder"] in rules.FOLDERS, "匹配不到会的材料先放进一个文件夹（待核对）")
+    materials.delete(r2["id"])
+    check(not db.q1("SELECT 1 FROM material WHERE id = ?", (r2["id"],)) and not materials._path(r2["id"]).exists()
+          and not db.q1("SELECT 1 FROM chunk WHERE meeting_id = ?", (-r2["id"],)), "删除材料：文件、页面、检索段一起删掉")
+    if materials._ocr():   # CI 里装了 OCR 就顺便测一下图片页
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new("RGB", (1200, 500), "white")
+        ImageDraw.Draw(img).text((60, 180), "REVENUE TARGET 2027", fill="black", font=ImageFont.load_default(size=72))
+        pdf3 = pathlib.Path(TMP) / "u3.pdf"
+        img.save(pdf3, "PDF", resolution=100)
+        r3 = materials.save_upload(str(pdf3), "图片页.pdf", "smoke")
+        materials.process(r3["id"])
+        t = db.q1("SELECT text, source FROM material_page WHERE material_id = ?", (r3["id"],))
+        check("REVENUE" in (t["text"] or "").upper() and "ocr" in t["source"], f"图片页用 OCR 认出文字（{(t['text'] or '')[:30]}）")
+    else:
+        print("  · 本机没装 OCR，跳过图片页测试")
+
     print("同义词 / 用量")
     from app import synonyms, llm as _llm
     synonyms.seed()

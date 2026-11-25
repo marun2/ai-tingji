@@ -141,7 +141,8 @@
     renderPreview();
   }
   async function loadTree() {
-    S.tree = await api("api/tree");
+    const [t, mats] = await Promise.all([api("api/tree"), api("api/materials").catch(() => ({ items: [] }))]);
+    S.tree = t; S.matCount = mats.items.length;
 
     drawTree();
   }
@@ -152,6 +153,7 @@
     if (S.tree.pending !== undefined) {
       h += `<div class="node pending ${S.sel.pending ? "on" : ""}" data-pending="1"><span class="ico"></span>待确认<span class="n">${S.tree.pending}</span></div>`;
     }
+    if (S.matCount) h += `<div class="node mats ${S.sel.mats ? "on" : ""}" data-mats="1"><span class="ico"></span>会议材料<span class="n">${S.matCount}</span></div>`;
     for (const [g, ico] of groups) {
       const fs = S.tree.folders.filter((f) => f.group === g);
       if (!fs.length) continue;
@@ -168,6 +170,7 @@
     el.innerHTML = h;
     $$(".node", el).forEach((n) => n.onclick = () => {
       if (n.dataset.pending) return selectPending();
+      if (n.dataset.mats) return selectMats();
       const f = n.dataset.folder, m = n.dataset.month || "";
       if (!m && S.sel.folder === f && !S.sel.month && !S.q) { S.sel.folder = ""; drawTree(); return; } // 再点一次收起
       select(f, m);
@@ -181,8 +184,13 @@
     S.sel = { folder: "", month: "", pending: true }; S.page = 1; S.q = ""; S.terms = []; S.checked.clear(); $("#searchInput").value = "";
     drawTree(); await loadList();
   }
+  async function selectMats() {
+    S.sel = { folder: "", month: "", pending: false, mats: true }; S.page = 1; S.q = ""; S.terms = []; $("#searchInput").value = "";
+    drawTree(); await loadList();
+  }
   async function loadList() {
     const el = $("#list"); if (!el) return;
+    if (S.sel.mats) return loadMats();
     if (!S.sel.folder && !S.sel.pending) { el.innerHTML = `<div class="empty-state"><div>从左边选择一个文件夹</div></div>`; return; }
     el.innerHTML = `<div class="list-head"><div class="muted">加载中…</div></div>`;
     const p = new URLSearchParams({ page: S.page });
@@ -245,6 +253,13 @@
       const r = await api("api/search?" + new URLSearchParams({ q }));
       S.terms = r.terms || [];
       drawList(`搜索：${q}`, r.total > r.items.length ? `找到 ${r.total} 场，显示最相关的 ${r.items.length} 场` : `找到 ${r.total} 场`, r.items, r.total, true);
+      if ((r.materials || []).length) {
+        const box = document.createElement("div"); box.className = "mat-hits";
+        box.innerHTML = `<div class="mh-h">会议材料里也有 ${r.materials.length} 份</div>` + r.materials.map((x) => `<div class="mh" data-mat="${x.id}" data-p="${x.pages[0]}"><div class="title">${mark(esc(x.filename))}</div><div class="meta"><span>${esc(x.date || "")}</span><span>第 ${x.pages.join("、")} 页</span></div><div class="snip">${mark(esc(x.snippet))}</div></div>`).join("");
+        const items = $(".items", el); items.parentNode.insertBefore(box, items);
+        $$(".mh", box).forEach((it) => it.onclick = () => openMaterial(+it.dataset.mat, +it.dataset.p));
+        if (!r.items.length) { const es = $(".items .empty-state", el); if (es) es.remove(); }
+      }
     } catch (e) { el.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; }
   }
 
@@ -256,6 +271,7 @@
     $("#preview").innerHTML = `<div class="empty-state muted">加载中…</div>`;
     try { S.doc = await api("api/meetings/" + id); } catch (e) { $("#preview").innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
     addRecent(S.doc);
+    S.docMats = (await api(`api/meetings/${id}/materials`).catch(() => ({ items: [] }))).items;
     renderPreview();
   }
   function renderPreview() {
@@ -268,16 +284,18 @@
       <div class="facts"><span><b>时间</b>${esc(m.start_time || "日期不详")}</span>${m.creator ? `<span><b>创建人</b>${esc(m.creator)}</span>` : ""}${m.org === "历史文件夹" ? `<span><b>来源</b>历史文件夹</span>` : ""}${m.duration ? `<span><b>时长</b>${fmtDur(m.duration)}</span>` : ""}<span><b>主体</b>${esc(m.entity || "—")}</span></div>
       <div class="tags" style="margin-top:8px">${(m.folders || []).map(folderTag).join("")}${m.mtype && m.mtype !== "其他" ? `<span class="tag">${esc(m.mtype)}</span>` : ""}${m.sensitive ? `<span class="tag bad">敏感</span>` : ""}${m.status === "pending" ? `<span class="tag warn">待确认</span>` : ""}${m.keywords ? m.keywords.split(/[,，、]/).slice(0, 8).map((k) => `<span class="tag ok">${esc(k.trim())}</span>`).join("") : ""}</div>`;
     if (S.me.is_admin) h += classifyBox(m);
-    h += `<div class="tabs"><button data-t="summary" class="${S.tab === "summary" ? "on" : ""}">摘要</button><button data-t="transcript" class="${S.tab === "transcript" ? "on" : ""}">原文</button><button data-t="todos" class="${S.tab === "todos" ? "on" : ""}">待办${todos.length ? ` (${todos.length})` : ""}</button></div>`;
+    h += `<div class="tabs"><button data-t="summary" class="${S.tab === "summary" ? "on" : ""}">摘要</button><button data-t="transcript" class="${S.tab === "transcript" ? "on" : ""}">原文</button><button data-t="todos" class="${S.tab === "todos" ? "on" : ""}">待办${todos.length ? ` (${todos.length})` : ""}</button>${(S.docMats || []).length ? `<button data-t="mats" class="${S.tab === "mats" ? "on" : ""}">材料 (${S.docMats.length})</button>` : ""}</div>`;
     if (S.tab === "summary") h += m.summary ? `<div class="md">${mark(md(m.summary))}</div>` : `<div class="muted">这场会没有 AI 摘要，可以看原文。</div>`;
     if (S.tab === "transcript") {
       if (m.truncated) h += `<div class="notice warn">${m.org === "历史文件夹" ? "这份原文在以前整理的 Word 里就只保存了一部分，后半段缺失。" : "原文太长，钉钉导出的 Excel 只保存了前 32,767 个字，后半段缺失。"}</div>`;
       h += m.transcript ? `<div class="transcript">${mark(transcriptHtml(m.transcript))}</div>` : `<div class="muted">没有转写原文。</div>`;
     }
+    if (S.tab === "mats") h += matCards(S.docMats || []);
     if (S.tab === "todos") h += todos.length ? `<ol class="todos md">${todos.map((t) => `<li>${mark(esc(t))}</li>`).join("")}</ol>` : `<div class="muted">没有待办事项。</div>`;
     h += `</div>`;
     el.innerHTML = h; el.scrollTop = 0;
     $$(".tabs button", el).forEach((b) => b.onclick = () => { S.tab = b.dataset.t; renderPreview(); });
+    $$("[data-mat]", el).forEach((c) => c.onclick = () => openMaterial(+c.dataset.mat));
     $("#back", el).onclick = () => $("#kb").classList.remove("show-doc");
     if (S.me.is_admin) bindClassify(m);
   }
@@ -342,7 +360,7 @@
       else {
         let cited = t.sources.filter((s) => s.cited);
         if (!cited.length) cited = t.sources.slice(0, 8);
-        const src = cited.length ? `<div class="srcs"><div class="srcs-h">出处 · ${cited.length} 处</div>${cited.map((s) => `<div class="src" data-i="${i}" data-n="${s.n}"><span class="n">${s.n}</span><div><div class="st">${esc(s.title)}</div><div class="sm">${esc(s.date || "日期不详")} · ${s.kind === "summary" ? "摘要" : "原文"}</div><div class="sx">${esc(plain(s.text).slice(0, 120))}…</div></div></div>`).join("")}</div>` : "";
+        const src = cited.length ? `<div class="srcs"><div class="srcs-h">出处 · ${cited.length} 处</div>${cited.map((s) => `<div class="src" data-i="${i}" data-n="${s.n}"><span class="n">${s.n}</span><div><div class="st">${esc(s.title)}</div><div class="sm">${esc((s.date || "").slice(0, 10) || "日期不详")} · ${s.kind === "material" ? `会议材料 第 ${s.page} 页` : s.kind === "summary" ? "摘要" : "原文"}</div><div class="sx">${esc(plain(s.text).slice(0, 120))}…</div></div></div>`).join("")}</div>` : "";
         a = `<div class="a"><div class="md">${answerHtml(t.answer, t.sources)}</div>${src}
           <div class="a-note">回答里的数字和说法来自会议发言，未经核实；重要决定请点出处看原文。</div><div class="a-foot"><span class="muted">${t.seconds} 秒${t.vector ? "" : " · 只用了关键词检索"}${t.range && (t.range[0] || t.range[1]) ? ` · 时间 ${t.range[0] || "…"} ~ ${t.range[1] || "今天"}` : ""}</span>
           <button class="rate ${t.rating === 1 ? "on" : ""}" data-i="${i}" data-r="1" title="有用" aria-label="有用"><svg viewBox="0 0 24 24"><path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7V10l4-8a3 3 0 0 1 4 3.9z"/></svg></button><button class="rate ${t.rating === -1 ? "on" : ""}" data-i="${i}" data-r="-1" title="没用" aria-label="没用"><svg viewBox="0 0 24 24"><path d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.6 3H17v11l-4 8a3 3 0 0 1-4-3.9z"/></svg></button></div></div>`;
@@ -385,6 +403,7 @@
   }
   async function openSource(i, n) {
     const t = ASK.thread[i]; const s = t && t.sources.find((x) => x.n === n); if (!s) return;
+    if (s.material_id) return openMaterial(s.material_id, s.page);
     openMeetingModal(s.meeting_id, s);
   }
   async function openMeetingModal(meetingId, s) {
@@ -392,11 +411,13 @@
     let m;
     try { m = await api("api/meetings/" + meetingId); } catch (e) { toast(e.message, true); return; }
     addRecent(m);
+    const mats = (await api(`api/meetings/${meetingId}/materials`).catch(() => ({ items: [] }))).items;
     const box = $("#modal");
     const hl = esc(s.text.slice(0, 60));
     box.innerHTML = `<div class="box doc-modal"><div class="dm-head"><div><div class="dm-t">${esc(m.title)}</div><div class="muted" style="font-size:12.5px">${esc(m.start_time || "日期不详")} · ${(m.folders || []).join("、")}</div></div>
       <div style="display:flex;gap:6px"><a class="btn sm" href="${exportUrl({ ids: m.id })}">导出 Word</a><button class="btn sm" data-a="0">关闭</button></div></div>
       ${s.text ? `<div class="notice info">引用的这段（${s.kind === "summary" ? "摘要" : "原文"}）：${esc(plain(s.text).slice(0, 300))}${s.text.length > 300 ? "…" : ""}</div>` : ""}
+      ${mats.length ? `<div class="dm-mats">材料：${mats.map((x) => `<a class="lk" data-mat="${x.id}">${esc(x.filename)}</a>`).join("　")}</div>` : ""}
       <div class="tabs"><button data-t="summary" class="${s.kind === "summary" ? "on" : ""}">摘要</button><button data-t="transcript" class="${s.kind !== "summary" ? "on" : ""}">原文</button></div><div id="dmBody"></div></div>`;
     box.hidden = false;
     const show = (k) => {
@@ -407,11 +428,60 @@
       if (key) { const hit = [...$("#dmBody").querySelectorAll("p,li,h2,h3,h4,blockquote")].find((p) => p.textContent.includes(key.slice(0, 12))); if (hit) { hit.classList.add("hit"); setTimeout(() => hit.scrollIntoView({ block: "center" }), 50); } }
     };
     $$(".doc-modal .tabs button").forEach((b) => b.onclick = () => show(b.dataset.t));
+    $$(".dm-mats [data-mat]").forEach((a) => a.onclick = () => openMaterial(+a.dataset.mat));
     show(s.kind === "summary" ? "summary" : "transcript");
     box.onclick = (e) => { if (e.target.dataset.a === "0" || e.target === box) box.hidden = true; };
   }
 
 
+
+  // ------------------------------------------------------------ 会议材料（PDF）：查看、会议档案里的列表、会议下的卡片
+  const fmtSize = (b) => b >= 1 << 20 ? (b / (1 << 20)).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+  const matImg = (id, p, w) => `api/materials/${id}/page/${p}?w=${w || 1400}`;
+  function matCards(list) {
+    if (!list.length) return `<div class="muted">没有材料</div>`;
+    return `<div class="mat-cards">${list.map((x) => `<div class="mc" data-mat="${x.id}"><img loading="lazy" src="${matImg(x.id, 1, 320)}" alt=""><div class="mc-t">${esc(x.filename)}</div><div class="mc-m">${x.pages || 0} 页 · ${esc(x.date || "")}</div></div>`).join("")}</div>`;
+  }
+  async function loadMats() {
+    const el = $("#list");
+    el.innerHTML = `<div class="list-head"><div class="muted">加载中…</div></div>`;
+    let r; try { r = await api("api/materials"); } catch (e) { el.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+    let h = `<div class="list-head"><div class="t">会议材料</div><div class="s">${r.items.length} 份 PDF · 挂在会议下的也能在会议里的「材料」看到</div></div><div class="items">`;
+    if (!r.items.length) h += `<div class="empty-state"><div><div class="big">${GLYPH}</div>还没有材料</div></div>`;
+    for (const x of r.items) {
+      h += `<div class="item ${S.curMat === x.id ? "on" : ""}" data-mat="${x.id}"><div class="title">${esc(x.filename)}</div>
+        <div class="meta"><span>${esc(x.date || "")}</span><span>${x.pages || 0} 页</span>${x.status !== "ok" ? `<span class="warn">处理中</span>` : ""}</div>
+        <div class="tags">${x.meeting ? `<span class="tag">会议：${esc(x.meeting.title.slice(0, 22))}</span>` : x.folder ? folderTag(x.folder) : ""}${x.match_status === "pending" ? `<span class="tag warn">待核对</span>` : ""}${x.sensitive ? `<span class="tag bad">敏感</span>` : ""}</div></div>`;
+    }
+    el.innerHTML = h + `</div>`;
+    $$(".item", el).forEach((it) => it.onclick = () => { S.curMat = +it.dataset.mat; $$(".item", el).forEach((i) => i.classList.toggle("on", i === it)); $("#kb").classList.add("show-doc"); renderMaterial($("#preview"), S.curMat); });
+  }
+  async function renderMaterial(el, id, page, inModal) {
+    el.innerHTML = `<div class="empty-state muted">加载中…</div>`;
+    let m; try { m = await api("api/materials/" + id); } catch (e) { el.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+    const pages = m.page_list || [];
+    el.innerHTML = `<div class="doc mat-doc">${inModal ? "" : `<button class="btn sm back" id="back">← 返回列表</button>`}
+      <div class="mat-head"><div><h1 class="dt">${esc(m.filename)}</h1>
+        <div class="facts"><span><b>日期</b>${esc(m.date || "—")}</span><span><b>页数</b>${m.pages || 0}</span><span><b>大小</b>${fmtSize(m.size || 0)}</span>${m.meeting ? `<span><b>会议</b><a class="lk" id="matMeet">${esc(m.meeting.title)}</a></span>` : m.folder ? `<span><b>文件夹</b>${esc(m.folder)}</span>` : ""}</div></div>
+        <div class="mat-act"><a class="btn sm" href="api/materials/${m.id}/file">下载 PDF</a>${inModal ? `<button class="btn sm" data-a="0">关闭</button>` : ""}</div></div>
+      ${m.status !== "ok" ? `<div class="notice warn">还在读取（${m.progress || 0} / ${m.pages || "?"} 页），稍后再看</div>` : ""}
+      ${pages.length > 1 ? `<div class="mat-jump">${pages.map((p) => `<button data-go="${p.page_no}">${p.page_no}</button>`).join("")}</div>` : ""}
+      ${pages.map((p) => `<section class="mp" id="mp${id}-${p.page_no}"><div class="mp-n">第 ${p.page_no} 页${p.source && p.source.includes("ocr") ? `<span>含图片识别的文字</span>` : p.source === "image" ? `<span>图片页，没有识别文字</span>` : ""}</div>
+        <img loading="lazy" src="${matImg(id, p.page_no)}" alt="第 ${p.page_no} 页">
+        ${p.text ? `<details><summary>这一页的文字</summary><div class="mp-t">${mark(esc(p.text))}</div></details>` : ""}</section>`).join("")}</div>`;
+    const b = $("#back", el); if (b) b.onclick = () => $("#kb").classList.remove("show-doc");
+    const mm = $("#matMeet", el); if (mm) mm.onclick = () => openMeetingModal(m.meeting.id);
+    const goTo = (n) => { const t = document.getElementById(`mp${id}-${n}`); if (t) t.scrollIntoView({ block: "start", behavior: "smooth" }); };
+    $$("[data-go]", el).forEach((x) => x.onclick = () => goTo(+x.dataset.go));
+    if (page && page > 1) setTimeout(() => goTo(page), 300);
+  }
+  function openMaterial(id, page) {
+    const box = $("#modal");
+    box.innerHTML = `<div class="box doc-modal mat-modal" id="matBox"></div>`;
+    box.hidden = false;
+    renderMaterial($("#matBox"), id, page, true);
+    box.onclick = (e) => { if (e.target.dataset.a === "0" || e.target === box) box.hidden = true; };
+  }
 
   // ------------------------------------------------------------ 洞察（可视化）
   // 洞察区用彩色（用户 2026-11-24 要求），外壳仍是灰白；类别同时靠颜色和形状区分
@@ -869,11 +939,11 @@
   let pollTimer = null;
   function renderAdmin() {
     clearTimeout(pollTimer);
-    const tabs = [["import", "导入听记"], ["members", "人员权限"], ["model", "模型与检索"], ["synonyms", "同义词"], ["terms", "关键词"], ["asks", "提问记录"], ["audit", "操作记录"]];
+    const tabs = [["import", "导入听记"], ["members", "人员权限"], ["model", "模型与检索"], ["materials", "会议材料"], ["synonyms", "同义词"], ["terms", "关键词"], ["asks", "提问记录"], ["audit", "操作记录"]];
     api("api/admin/usage").then((u) => { const b = $("#useBanner"); if (b && (u.over || u.near)) { b.hidden = false; b.innerHTML = `大模型用量${u.over ? "已超出" : "快到"}本月额度（${fmtTok(u.total_in + u.total_out)} / ${fmtTok(u.budget_tokens)}），在「模型与检索」里查看。`; } }).catch(() => {});
     app.innerHTML = `<div class="admin"><div class="admin-inner"><div id="useBanner" class="notice warn" hidden></div><div class="subnav">${tabs.map(([k, n]) => `<button data-k="${k}" class="${S.adminTab === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="adm"></div></div></div>`;
     $$(".subnav button").forEach((b) => b.onclick = () => { S.adminTab = b.dataset.k; renderAdmin(); });
-    ({ import: admImport, members: admMembers, model: admModel, synonyms: admSyn, terms: admTerms, asks: admAsks, audit: admAudit })[S.adminTab]();
+    ({ import: admImport, members: admMembers, model: admModel, materials: admMats, synonyms: admSyn, terms: admTerms, asks: admAsks, audit: admAudit })[S.adminTab]();
   }
 
   async function admImport() {
@@ -1053,6 +1123,91 @@
     };
     draw();
   }
+  // 管理 → 会议材料：上传 PDF、核对挂到哪场会、删除
+  const MAT = { status: "", timer: null };
+  async function admMats() {
+    clearTimeout(MAT.timer);
+    const el = $("#adm");
+    if (!$("#matUp")) el.innerHTML = `<div class="card"><h3>上传会议材料（PDF）</h3>
+      <p class="desc">会议的汇报材料（PPT 请先另存为 PDF），可以一次选多个，单个最大 200MB。上传后后台逐页读文字，图片页会自动识别里面的字（在服务器本地识别，不花大模型用量），然后按文件名里的日期和内容建议挂到哪场会。<br>
+      <b>核对后才算数</b>：确认前只有你和董事局能看到；确认后，挂在会议下的材料跟着那场会的权限走，没挂会议的按所在文件夹的权限。文件名里带上日期（如 11-19）匹配会更准。</p>
+      <label class="drop" id="matDrop"><input type="file" id="matUp" accept=".pdf,application/pdf" multiple hidden><div>点击选择 PDF，或拖到这里（可多选）</div></label><div id="matProg" class="muted" style="margin-top:8px"></div></div>
+      <div class="card"><div id="matBody" class="muted">加载中…</div></div>`;
+    const up = $("#matUp"), drop = $("#matDrop");
+    up.onchange = () => up.files.length && matUpload([...up.files]);
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); const fs = [...e.dataTransfer.files].filter((f) => /\.pdf$/i.test(f.name)); if (fs.length) matUpload(fs); };
+    let r; try { r = await api("api/admin/materials?status=" + MAT.status); } catch (e) { $("#matBody").textContent = e.message; return; }
+    const c = r.counts;
+    const tabs = [["", `全部 ${c.n}`], ["review", `待核对 ${c.review}`], ["processing", `读取中 ${c.processing}`], ["failed", `失败 ${c.failed}`]];
+    const sel = new Set();
+    const body = $("#matBody");
+    body.innerHTML = `<div class="mat-bar"><div class="subnav">${tabs.map(([k, n]) => `<button data-s="${k}" class="${MAT.status === k ? "on" : ""}">${n}</button>`).join("")}</div>
+      <span class="muted">共占用 ${fmtSize(c.bytes || 0)}${r.state.running ? ` · 正在读取：${esc(r.state.current || "")}` : ""}${r.state.ocr === false ? " · <span class='warn'>图片识别没装好，只读了文字层</span>" : ""}</span>
+      <button class="btn sm primary" id="matConfirm" disabled>确认所选</button></div>
+      ${r.items.length ? `<div class="mat-rows">${r.items.map((x) => {
+        const sug = (x.suggestions || []).filter((g) => g.id !== (x.meeting && x.meeting.id));
+        const st = x.status === "ok" ? "" : x.status === "failed" ? `<span class="tag bad">读取失败</span>` : `<span class="tag warn">读取中 ${x.progress || 0}/${x.pages || "?"}</span>`;
+        return `<div class="mr" data-id="${x.id}">
+          <div class="mr-top">${x.status === "ok" && x.match_status === "pending" ? `<input type="checkbox" class="mchk" data-id="${x.id}">` : `<span style="width:16px"></span>`}
+            <a class="mr-f lk" data-view="${x.id}">${esc(x.filename)}</a>
+            <span class="muted">${x.pages || 0} 页 · ${fmtSize(x.size || 0)}${x.ocr_pages ? ` · ${x.ocr_pages} 页做了图片识别` : ""} · ${esc((x.created_at || "").slice(5, 16))}</span>
+            ${st}${x.match_status === "confirmed" ? `<span class="tag ok">已确认</span>` : x.status === "ok" ? `<span class="tag warn">待核对</span>` : ""}${x.sensitive ? `<span class="tag bad">敏感</span>` : ""}</div>
+          ${x.error ? `<div class="bad" style="font-size:12.5px;margin:4px 0 0 26px">${esc(x.error)}</div>` : ""}
+          <div class="mr-where">${x.meeting ? `挂在会议：<b>${esc(x.meeting.date)} ${esc(x.meeting.title)}</b>` : `没挂会议，放在文件夹：<b>${esc(x.folder || "—")}</b>`}</div>
+          ${x.status === "ok" ? `<div class="mr-act">
+            ${sug.length ? `<select class="mr-sug"><option value="">换成建议的会…</option>${sug.map((g) => `<option value="${g.id}">${esc(g.date)} ${esc(g.title)}（${Math.round(g.score * 100)}）</option>`).join("")}</select>` : ""}
+            <input class="mr-q" placeholder="按会议标题搜，挂到别的会"><span class="mr-res"></span>
+            <select class="mr-fold"><option value="">不挂会议，放进文件夹…</option>${["研发市场销售", "人事", "财务", "IT", "董秘办", "每日博士", "大健康", "均瑶云商", "均瑶润盈", "衢州食品", "均瑶宜昌", "泛缘"].map((f) => `<option>${f}</option>`).join("")}</select>
+            <label class="mr-s"><input type="checkbox" class="mr-sens" ${x.sensitive ? "checked" : ""}>敏感</label>
+            ${x.match_status === "pending" ? `<button class="btn sm primary mr-ok">确认</button>` : `<button class="btn sm mr-un">改回待核对</button>`}
+            <button class="btn sm mr-del">删除</button></div>` : `<div class="mr-act">${x.status === "failed" ? `<button class="btn sm mr-retry">重新读取</button>` : ""}<button class="btn sm mr-del">删除</button></div>`}</div>`;
+      }).join("")}</div>` : `<div class="muted" style="padding:14px 0">没有材料</div>`}`;
+    $$(".mat-bar [data-s]", body).forEach((b) => b.onclick = () => { MAT.status = b.dataset.s; admMats(); });
+    const syncSel = () => { const b = $("#matConfirm"); b.disabled = !sel.size; b.textContent = sel.size ? `确认所选 ${sel.size} 份` : "确认所选"; };
+    $$(".mchk", body).forEach((c) => c.onchange = () => { c.checked ? sel.add(+c.dataset.id) : sel.delete(+c.dataset.id); syncSel(); });
+    $("#matConfirm").onclick = async () => { try { await api("api/materials/confirm", { method: "POST", json: { ids: [...sel] } }); toast(`已确认 ${sel.size} 份`); admMats(); } catch (e) { toast(e.message, true); } };
+    const put = async (id, json, msg) => { try { await api("api/materials/" + id, { method: "PUT", json }); if (msg) toast(msg); admMats(); } catch (e) { toast(e.message, true); } };
+    $$(".mr", body).forEach((row) => {
+      const id = +row.dataset.id, q = (k) => $(k, row);
+      const v = q("[data-view]"); if (v) v.onclick = () => openMaterial(id);
+      if (q(".mr-sug")) q(".mr-sug").onchange = (e) => e.target.value && put(id, { meeting_id: +e.target.value }, "已改挂");
+      if (q(".mr-fold")) q(".mr-fold").onchange = (e) => e.target.value && put(id, { meeting_id: null, folder: e.target.value }, "已放进 " + e.target.value);
+      if (q(".mr-sens")) q(".mr-sens").onchange = (e) => put(id, { sensitive: e.target.checked });
+      if (q(".mr-ok")) q(".mr-ok").onclick = () => put(id, { confirm: true }, "已确认");
+      if (q(".mr-un")) q(".mr-un").onclick = () => put(id, { unconfirm: true }, "已改回待核对");
+      if (q(".mr-retry")) q(".mr-retry").onclick = () => put(id, { retry: true }, "重新读取");
+      q(".mr-del").onclick = async () => { if (await ask("删除这份材料？", "原文件和读出来的文字都会删掉，不能恢复。", "删除")) put(id, { delete: true }, "已删除"); };
+      const inp = q(".mr-q");
+      if (inp) { let t = null; inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
+        const res = q(".mr-res"); if (!inp.value.trim()) { res.innerHTML = ""; return; }
+        const r2 = await api("api/materials/meetings?q=" + encodeURIComponent(inp.value.trim())).catch(() => ({ items: [] }));
+        res.innerHTML = r2.items.length ? `<div class="mr-pick">${r2.items.map((g) => `<div data-g="${g.id}">${esc(g.date)} ${esc(g.title)}</div>`).join("")}</div>` : `<span class="muted">没找到</span>`;
+        $$("[data-g]", res).forEach((d) => d.onclick = () => put(id, { meeting_id: +d.dataset.g }, "已改挂"));
+      }, 300); }; }
+    });
+    if (c.processing) MAT.timer = setTimeout(() => { if (S.view === "admin" && S.adminTab === "materials") admMats(); }, 5000);
+  }
+  async function matUpload(files) {
+    const prog = $("#matProg");
+    const fd = new FormData(); files.forEach((f) => fd.append("file", f));
+    const total = files.reduce((n, f) => n + f.size, 0);
+    prog.textContent = `上传中… 0 / ${fmtSize(total)}`;
+    try {
+      const r = await new Promise((res, rej) => {
+        const x = new XMLHttpRequest(); x.open("POST", "api/materials/upload");
+        x.upload.onprogress = (e) => { prog.textContent = `上传中… ${Math.round(e.loaded / e.total * 100)}%（${fmtSize(e.loaded)} / ${fmtSize(e.total)}）`; };
+        x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch (e) { /* 忽略 */ } x.status < 300 ? res(d) : rej(new Error(d.detail || d.error || "上传失败")); };
+        x.onerror = () => rej(new Error("网络出错，上传失败")); x.send(fd);
+      });
+      const items = r.items || [];
+      const okN = items.filter((i) => i.id && !i.duplicate).length, dup = items.filter((i) => i.duplicate).length, bad = items.filter((i) => i.error);
+      prog.innerHTML = `上传好了：新增 ${okN} 份${dup ? `，${dup} 份以前传过已跳过` : ""}${bad.length ? `，<span class="bad">${bad.length} 份没收：${bad.map((b) => esc(b.filename + "（" + b.error + "）")).join("；")}</span>` : ""}。后台正在逐页读取，读完会出现在“待核对”。`;
+      $("#matUp").value = ""; MAT.status = ""; admMats();
+    } catch (e) { prog.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  }
+
   async function admTerms() {
     const el = $("#adm");
     let r; try { r = await api("api/admin/terms"); } catch (e) { el.textContent = e.message; return; }

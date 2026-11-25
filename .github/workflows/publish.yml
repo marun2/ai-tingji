@@ -30,9 +30,13 @@ jobs:
       - name: 安装依赖并跑冒烟测试
         run: |
           pip install -q -r requirements.txt
+          pip uninstall -y -q opencv-python || true
+          pip install -q opencv-python-headless
           python -m compileall -q app scripts
           python -c "import app.main"
           python scripts/smoke.py
+      - name: 检查图片识别（OCR）能用
+        run: python -c "from rapidocr_onnxruntime import RapidOCR; import pypdfium2; RapidOCR(); print('OCR ok')"
       - name: 检查本地向量模型（下载约 100MB）
         run: python scripts/embed_check.py
 

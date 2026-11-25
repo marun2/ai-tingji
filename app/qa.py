@@ -27,6 +27,7 @@ ANSWER = """你是均瑶健康的会议知识助手。只能根据下面【会�
 - 每个要点后面用 [编号] 标出处，编号就是资料的编号，可以多个如 [2][5]
 - 资料不够回答时，直接说“现有会议记录里没有找到……”，并说明找到了哪些相近的内容
 - 不同会议说法不一致时，分别列出并标出处
+- 资料里标“会议材料”的是会前准备的汇报材料（PPT/PDF），标“摘要”“原文”的是会上发言；两者数字不一致时都列出，并说明哪个是材料、哪个是发言
 - 不要输出资料编号以外的链接"""
 
 
@@ -90,12 +91,32 @@ def _keyword_hits(w: str, args: list, kws: list[str]) -> dict[int, float]:
     return sc
 
 
+def _material_hits(mids: list[int], kws: list[str]) -> dict[int, float]:
+    """会议材料（PDF）里的关键词命中；材料的文本段 meeting_id 是负的材料编号"""
+    if not kws or not mids:
+        return {}
+    from . import synonyms
+    groups = [synonyms.expand(k) for k in kws]
+    forms = [f for g in groups for f in g][:40]
+    like = " OR ".join("c.text LIKE ?" for _ in forms)
+    rows = db.q(f"SELECT c.id, c.text FROM chunk c WHERE c.meeting_id IN ({','.join('?' for _ in mids)}) AND ({like}) LIMIT 800",
+                (*[-m for m in mids], *[f"%{k}%" for k in forms]))
+    sc = {}
+    for r in rows:
+        s = sum(1 + min(sum(r["text"].count(f) for f in g), 5) * 0.3 for g in groups if any(f in r["text"] for f in g))
+        sc[r["id"]] = s * 1.1     # 材料是会前准备的正式内容，略微靠前
+    return sc
+
+
 def retrieve(u: dict, question: str, folder: str, q: dict) -> list[dict]:
+    from . import materials
     w, args = _scope_sql(u, folder, q)
     kw = _keyword_hits(w, args, q["keywords"])
+    mat_ids = materials.visible_ids(u, folder, q.get("date_from") or "", q.get("date_to") or "")
+    kw.update(_material_hits(mat_ids, q["keywords"]))
     vec = []
     if embed.ready():
-        allowed = {r["id"] for r in db.q(f"SELECT m.id FROM meeting m WHERE {w}", args)}
+        allowed = {r["id"] for r in db.q(f"SELECT m.id FROM meeting m WHERE {w}", args)} | {-m for m in mat_ids}
         if allowed:
             try:
                 qv = embed.embed([q["rewrite"] or question], query=True)[0]
@@ -114,6 +135,10 @@ def retrieve(u: dict, question: str, folder: str, q: dict) -> list[dict]:
     rows = {r["id"]: r for r in db.q(
         f"SELECT c.id, c.meeting_id, c.kind, c.text, m.title, m.start_time FROM chunk c JOIN meeting m ON m.id = c.meeting_id "
         f"WHERE c.id IN ({','.join('?' for _ in ids)})", ids)}
+    for r in db.q(f"SELECT c.id, c.meeting_id, c.kind, c.seq, c.text, mt.filename AS title, mt.doc_date AS start_time FROM chunk c "
+                  f"JOIN material mt ON mt.id = -c.meeting_id WHERE c.meeting_id < 0 AND c.id IN ({','.join('?' for _ in ids)})", ids):
+        if -r["meeting_id"] in mat_ids:
+            rows[r["id"]] = r
     out, per, chars = [], {}, 0
     for cid in ids:
         r = rows.get(cid)
@@ -154,12 +179,16 @@ def ask(u: dict, question: str, folder: str = "", history: list[dict] | None = N
             sources.append({"n": i, "meeting_id": m["meeting_id"], "title": m["title"], "date": (m["start_time"] or "")[:16], "text": brief, "kind": "summary"})
     else:
         for i, r in enumerate(retrieve(u, question, folder, q), 1):
-            sources.append({"n": i, "meeting_id": r["meeting_id"], "title": r["title"], "date": (r["start_time"] or "")[:16],
-                            "text": r["text"].split("\n", 1)[-1], "kind": r["kind"]})
+            src = {"n": i, "meeting_id": r["meeting_id"], "title": r["title"], "date": (r["start_time"] or "")[:16],
+                   "text": r["text"].split("\n", 1)[-1], "kind": r["kind"]}
+            if r["kind"] == "material":     # 会议材料：出处写成“《文件》第 n 页”
+                src.update(meeting_id=None, material_id=-r["meeting_id"], page=r.get("seq"))
+            sources.append(src)
     if not sources:
         answer = "在你能查看的会议记录里没有找到相关内容。可以换个说法、去掉时间范围，或者用顶部搜索框按关键词搜一下。"
     else:
-        material = "\n\n".join(f"[{s['n']}]《{s['title']}》{s['date']}（{'摘要' if s['kind'] == 'summary' else '原文'}）\n{s['text']}" for s in sources)
+        kname = lambda s: "会议材料 第 %s 页" % s.get("page") if s["kind"] == "material" else ("摘要" if s["kind"] == "summary" else "原文")  # noqa: E731
+        material = "\n\n".join(f"[{s['n']}]《{s['title']}》{s['date']}（{kname(s)}）\n{s['text']}" for s in sources)
         hist = [m for h in (history or [])[-2:] for m in ({"role": "user", "content": h.get("q", "")[:300]}, {"role": "assistant", "content": h.get("a", "")[:600]})]
         answer = llm.chat([{"role": "system", "content": ANSWER}, *hist,
                            {"role": "user", "content": f"【会议资料】\n{material}\n\n【问题】{q['rewrite'] or question}"}],
@@ -171,7 +200,7 @@ def ask(u: dict, question: str, folder: str = "", history: list[dict] | None = N
     scope = folder or ("全部" if u["see_all"] else rules.BIZ)
     with db.tx() as c:
         lid = db.insert(c, "ask_log", {"user_id": u["id"], "user_name": u["name"], "scope": scope, "question": question, "answer": answer,
-                                       "sources": json.dumps([{"n": s["n"], "meeting_id": s["meeting_id"], "title": s["title"]} for s in shown], ensure_ascii=False),
+                                       "sources": json.dumps([{"n": s["n"], "meeting_id": s["meeting_id"], "material_id": s.get("material_id"), "page": s.get("page"), "title": s["title"]} for s in shown], ensure_ascii=False),
                                        "seconds": secs, "created_at": access.now()})
     return {"id": lid, "answer": answer, "sources": shown, "keywords": q["keywords"], "mode": q["mode"], "seconds": secs,
             "range": [q["date_from"], q["date_to"]], "vector": embed.ready()}

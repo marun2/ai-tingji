@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS chunk (
   id SERIAL PRIMARY KEY,
   meeting_id INTEGER NOT NULL,
-  kind TEXT,                       -- summary 摘要 / transcript 原文
+  kind TEXT,                       -- summary 摘要 / transcript 原文 / material 会议材料（这时 meeting_id = -材料编号）
   seq INTEGER,
   text TEXT
 );
@@ -154,6 +154,37 @@ CREATE TABLE IF NOT EXISTS ui_event (
   action TEXT NOT NULL,            -- open 点开会议 / ask 追问 / view 打开驾驶舱 / period 切时间 等
   n INTEGER DEFAULT 0,
   PRIMARY KEY (day, card, action)
+);
+
+-- 会议材料（PDF）：挂到某场会（meeting_id）或放进某个文件夹（folder）；原文件在 DATA_DIR/materials/<id>.pdf
+CREATE TABLE IF NOT EXISTS material (
+  id SERIAL PRIMARY KEY,
+  filename TEXT NOT NULL,
+  sha256 TEXT UNIQUE,
+  size BIGINT DEFAULT 0,
+  pages INTEGER DEFAULT 0,
+  title TEXT,
+  doc_date TEXT,                   -- 从文件名 / 首页认出来的日期
+  meeting_id INTEGER,
+  folder TEXT,
+  sensitive INTEGER DEFAULT 0,
+  match_status TEXT DEFAULT 'pending',   -- pending 待核对 / confirmed 已确认（部门负责人只看已确认的）
+  suggestions TEXT,                -- 建议挂的会议 [{id,title,date,score}]
+  status TEXT DEFAULT 'queued',    -- queued / processing / ok / failed
+  progress INTEGER DEFAULT 0,
+  error TEXT,
+  ocr_pages INTEGER DEFAULT 0,
+  uploaded_by TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_material_meeting ON material(meeting_id);
+CREATE TABLE IF NOT EXISTS material_page (
+  material_id INTEGER NOT NULL,
+  page_no INTEGER NOT NULL,
+  text TEXT,
+  source TEXT,                     -- text 文字层 / ocr 图片识别 / text+ocr / image 纯图片没识别
+  PRIMARY KEY (material_id, page_no)
 );
 
 -- 大模型用量（按天、按用途）
