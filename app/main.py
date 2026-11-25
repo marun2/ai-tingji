@@ -602,7 +602,13 @@ async def mat_admin(req):
 
 async def mat_list(req):
     u = await run(user, req)
-    return ok({"items": await run(materials.list_visible, u, (req.query_params.get("q") or "").strip()[:40])})
+    p = req.query_params
+    folder = p.get("folder") or ""
+    if folder and folder not in access.folders_for(u):
+        raise HTTPException(403, "没有这个文件夹的权限")
+    month = p.get("month") or ""
+    items = await run(materials.list_visible, u, (p.get("q") or "").strip()[:40], folder, month)
+    return ok({"items": items, "months": await run(materials.months, u, folder)})
 
 
 async def mat_get(req):

@@ -170,7 +170,7 @@
     el.innerHTML = h;
     $$(".node", el).forEach((n) => n.onclick = () => {
       if (n.dataset.pending) return selectPending();
-      if (n.dataset.mats) return selectMats();
+      if (n.dataset.mats) { S.matF = null; return selectMats(); }
       const f = n.dataset.folder, m = n.dataset.month || "";
       if (!m && S.sel.folder === f && !S.sel.month && !S.q) { S.sel.folder = ""; drawTree(); return; } // 再点一次收起
       select(f, m);
@@ -201,6 +201,20 @@
     const title = S.sel.pending ? "待确认" : S.sel.folder + (S.sel.month ? " · " + fmtMonth(S.sel.month) : "");
     const desc = S.sel.pending ? "系统拿不准的会，先只有董事局和管理员能看。点开核对归类，确认后才会出现在对应文件夹。" : `${S.list.total} 场会议`;
     drawList(title, desc, S.list.items, S.list.total);
+    if (S.sel.folder && S.page === 1) folderMats(S.sel.folder, S.sel.month);
+  }
+  // 文件夹里的会议列表上方：这个文件夹（和月份）的材料，包括没挂会议的
+  async function folderMats(folder, month) {
+    const r = await api("api/materials?" + new URLSearchParams({ folder, month })).catch(() => null);
+    if (!r || !r.items.length || S.sel.folder !== folder || S.sel.month !== month || S.q) return;
+    const el = $("#list"), items = $(".items", el); if (!items) return;
+    const box = document.createElement("div"); box.className = "mat-hits fold-mats";
+    const show = r.items.slice(0, 4);
+    box.innerHTML = `<div class="mh-h"><span>这个文件夹的材料 ${r.items.length} 份</span>${r.items.length > show.length ? `<a class="lk" id="fmAll">查看全部 →</a>` : ""}</div>` +
+      show.map((x) => `<div class="mh fm" data-mat="${x.id}"><img loading="lazy" src="${matImg(x.id, 1, 320)}" alt=""><div><div class="title">${esc(x.filename)}</div><div class="meta"><span>${esc(x.date || "")}</span><span>${x.pages || 0} 页</span><span>${x.meeting ? "会议：" + esc(x.meeting.title.slice(0, 18)) : "没挂会议"}</span></div></div></div>`).join("");
+    items.parentNode.insertBefore(box, items);
+    $$(".fm", box).forEach((it) => it.onclick = () => { S.curMat = +it.dataset.mat; $("#kb").classList.add("show-doc"); renderMaterial($("#preview"), S.curMat); });
+    const all = $("#fmAll", box); if (all) all.onclick = () => { S.matF = { folder, month, q: "" }; selectMats(); };
   }
   function drawList(title, desc, items, total, isSearch) {
     const el = $("#list");
@@ -444,17 +458,26 @@
   }
   async function loadMats() {
     const el = $("#list");
-    el.innerHTML = `<div class="list-head"><div class="muted">加载中…</div></div>`;
-    let r; try { r = await api("api/materials"); } catch (e) { el.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
-    let h = `<div class="list-head"><div class="t">会议材料</div><div class="s">${r.items.length} 份 PDF · 挂在会议下的也能在会议里的「材料」看到</div></div><div class="items">`;
-    if (!r.items.length) h += `<div class="empty-state"><div><div class="big">${GLYPH}</div>还没有材料</div></div>`;
+    const F = S.matF || (S.matF = { folder: "", month: "", q: "" });
+    if (!$("#mfBar", el)) el.innerHTML = `<div class="list-head"><div class="t">会议材料</div><div class="s" id="mfDesc"></div>
+      <div class="mf-bar" id="mfBar"><select id="mfFolder" ${(S.me.folders || []).length < 2 ? "hidden" : ""}><option value="">全部文件夹</option>${(S.me.folders || []).map((f) => `<option ${F.folder === f ? "selected" : ""}>${esc(f)}</option>`).join("")}</select>
+        <select id="mfMonth"><option value="">全部月份</option></select><input id="mfQ" placeholder="在材料里搜" value="${esc(F.q)}"></div></div><div class="items" id="mfItems"></div>`;
+    $("#mfItems").innerHTML = `<div class="muted" style="padding:14px 16px">加载中…</div>`;
+    let r; try { r = await api("api/materials?" + new URLSearchParams(F)); } catch (e) { $("#mfItems").innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+    $("#mfMonth").innerHTML = `<option value="">全部月份</option>` + r.months.map((m) => `<option value="${m.ym}" ${F.month === m.ym ? "selected" : ""}>${fmtMonth(m.ym)}（${m.n}）</option>`).join("");
+    $("#mfDesc").textContent = `${r.items.length} 份 PDF${F.folder || F.month || F.q ? "（已筛选）" : ""} · 挂了会议的也能在那场会的「材料」里看到`;
+    let h = "";
+    if (!r.items.length) h = `<div class="empty-state"><div><div class="big">${GLYPH}</div>${F.folder || F.month || F.q ? "没有符合的材料" : "还没有材料"}</div></div>`;
     for (const x of r.items) {
-      h += `<div class="item ${S.curMat === x.id ? "on" : ""}" data-mat="${x.id}"><div class="title">${esc(x.filename)}</div>
-        <div class="meta"><span>${esc(x.date || "")}</span><span>${x.pages || 0} 页</span>${x.status !== "ok" ? `<span class="warn">处理中</span>` : ""}</div>
-        <div class="tags">${x.meeting ? `<span class="tag">会议：${esc(x.meeting.title.slice(0, 22))}</span>` : x.folder ? folderTag(x.folder) : ""}${x.match_status === "pending" ? `<span class="tag warn">待核对</span>` : ""}${x.sensitive ? `<span class="tag bad">敏感</span>` : ""}</div></div>`;
+      h += `<div class="item ${S.curMat === x.id ? "on" : ""}" data-mat="${x.id}"><div class="title">${mark(esc(x.filename))}</div>
+        <div class="meta"><span>${esc(x.date || "")}</span><span>${x.pages || 0} 页</span>${x.status !== "ok" ? `<span class="warn">读取中</span>` : ""}</div>
+        <div class="tags">${x.meeting ? `<span class="tag">会议：${esc(x.meeting.title.slice(0, 22))}</span>` : x.folder ? folderTag(x.folder) + `<span class="tag">没挂会议</span>` : ""}${x.match_status === "pending" ? `<span class="tag warn">待核对</span>` : ""}${x.sensitive ? `<span class="tag bad">敏感</span>` : ""}</div></div>`;
     }
-    el.innerHTML = h + `</div>`;
-    $$(".item", el).forEach((it) => it.onclick = () => { S.curMat = +it.dataset.mat; $$(".item", el).forEach((i) => i.classList.toggle("on", i === it)); $("#kb").classList.add("show-doc"); renderMaterial($("#preview"), S.curMat); });
+    $("#mfItems").innerHTML = h;
+    $$("#mfItems .item").forEach((it) => it.onclick = () => { S.curMat = +it.dataset.mat; $$("#mfItems .item").forEach((i) => i.classList.toggle("on", i === it)); $("#kb").classList.add("show-doc"); renderMaterial($("#preview"), S.curMat); });
+    $("#mfFolder").onchange = (e) => { F.folder = e.target.value; F.month = ""; loadMats(); };
+    $("#mfMonth").onchange = (e) => { F.month = e.target.value; loadMats(); };
+    let t = null; $("#mfQ").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { F.q = e.target.value.trim(); S.terms = F.q ? [F.q] : []; loadMats(); }, 350); };
   }
   async function renderMaterial(el, id, page, inModal) {
     el.innerHTML = `<div class="empty-state muted">加载中…</div>`;

@@ -342,7 +342,7 @@ def visible_ids(u: dict, folder: str = "", date_from: str = "", date_to: str = "
     if folder:
         where.append("(mt.folder = ? OR EXISTS (SELECT 1 FROM meeting_folder f2 WHERE f2.meeting_id = mt.meeting_id AND f2.folder = ?))")
         args += [folder, folder]
-    eff = "COALESCE((SELECT substr(m2.start_time, 1, 10) FROM meeting m2 WHERE m2.id = mt.meeting_id), mt.doc_date, substr(mt.created_at, 1, 10))"
+    eff = _EFF
     if date_from:
         where.append(f"{eff} >= ?"); args.append(date_from)
     if date_to:
@@ -379,19 +379,38 @@ def for_meeting(u: dict, meeting_id: int) -> list[dict]:
     return _decorate(db.q(f"SELECT {COLS} FROM material mt WHERE mt.meeting_id = ? AND {w} ORDER BY mt.id", (meeting_id, *a)))
 
 
-def list_visible(u: dict, q: str = "") -> list[dict]:
-    """会议档案里的「会议材料」：能看的全部材料，最新的在前"""
+_EFF = "COALESCE((SELECT substr(m2.start_time, 1, 10) FROM meeting m2 WHERE m2.id = mt.meeting_id), mt.doc_date, substr(mt.created_at, 1, 10))"
+
+
+def list_visible(u: dict, q: str = "", folder: str = "", month: str = "") -> list[dict]:
+    """会议档案里的「会议材料」：能看的材料，可按文件夹 / 月份 / 关键词筛；最新的在前。
+    按文件夹筛时：放在这个文件夹的 + 挂在这个文件夹的会下面的，都算"""
     w, a = _visible_sql(u)
     where, args = [w], list(a)
     if q:
         where.append("(mt.filename LIKE ? OR EXISTS (SELECT 1 FROM material_page p WHERE p.material_id = mt.id AND p.text LIKE ?))")
         args += [f"%{q}%", f"%{q}%"]
-    rows = db.q(f"SELECT {COLS} FROM material mt WHERE {' AND '.join(where)} ORDER BY mt.id DESC LIMIT 300", args)
+    if folder:
+        where.append("(mt.folder = ? OR EXISTS (SELECT 1 FROM meeting_folder f3 WHERE f3.meeting_id = mt.meeting_id AND f3.folder = ?))")
+        args += [folder, folder]
+    if month:
+        where.append(f"substr({_EFF}, 1, 7) = ?"); args.append(month[:7])
+    rows = db.q(f"SELECT {COLS} FROM material mt WHERE {' AND '.join(where)} ORDER BY {_EFF} DESC, mt.id DESC LIMIT 300", args)
     out = _decorate(rows)
     if not u["see_all"]:
         for r in out:
             r.pop("suggestions", None)
     return out
+
+
+def months(u: dict, folder: str = "") -> list[dict]:
+    """有材料的月份（筛选用）"""
+    w, a = _visible_sql(u)
+    where, args = [w], list(a)
+    if folder:
+        where.append("(mt.folder = ? OR EXISTS (SELECT 1 FROM meeting_folder f3 WHERE f3.meeting_id = mt.meeting_id AND f3.folder = ?))")
+        args += [folder, folder]
+    return db.q(f"SELECT substr({_EFF}, 1, 7) AS ym, COUNT(*) AS n FROM material mt WHERE {' AND '.join(where)} GROUP BY substr({_EFF}, 1, 7) ORDER BY ym DESC", args)
 
 
 def get(u: dict, mid: int) -> dict:

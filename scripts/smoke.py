@@ -310,6 +310,10 @@ def main():
     check(not materials.can_view(lead, r1["id"]) and materials.can_view(board, r1["id"]), "不挂会、放进财务：负责人看不到")
     materials.update(r1["id"], {"folder": rules.BIZ, "sensitive": True})
     check(not materials.can_view(lead, r1["id"]), "标成敏感后负责人看不到")
+    materials.update(r1["id"], {"sensitive": False})
+    check(any(x["id"] == r1["id"] for x in materials.list_visible(lead, folder=rules.BIZ)) and not materials.list_visible(lead, folder="财务"), "按文件夹能找到没挂会议的材料")
+    ym = materials.list_visible(board)[0]["date"][:7]
+    check(any(x["id"] == r1["id"] for x in materials.list_visible(board, month=ym)) and materials.months(board, rules.BIZ)[0]["ym"] == ym, "材料能按月份筛")
     pdf2 = pathlib.Path(TMP) / "u2.pdf"
     pdf2.write_bytes(text_pdf(["Quarterly HR training plan"]))
     r2 = materials.save_upload(str(pdf2), "培训计划.pdf", "smoke")
