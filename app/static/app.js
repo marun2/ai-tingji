@@ -602,39 +602,132 @@
     svg.addEventListener("pointerup", () => { drag = null; });
   }
 
+  // ------------------------------------------------------------ 部门协作（设计说明 docs/部门协作.md）
+  // 回答：哪些事是跨部门的、有没有拉通（共同会议）、哪两个部门联系最紧、某个部门和谁协作、它特有的关注点
+  // 不调大模型；点击只展开会议列表
+  const CB = { filter: "all", sel: null };
+  const CB_COL = { 板块: "#4f63d9", 上海食品: "#16a3a0", 子公司: "#ee8a2f" };
   async function insCollab() {
-    $("#insOpts").innerHTML = daysSel(); bindDays(insCollab);
+    $("#insOpts").innerHTML = daysSel(); bindDays(() => { CB.sel = null; insCollab(); });
     const el = $("#insBody"); el.innerHTML = emptyIns("加载中…");
     let d; try { d = await api("api/insights/collab?" + new URLSearchParams({ days: INS.days })); } catch (e) { el.innerHTML = emptyIns(esc(e.message)); return; }
-    if (d.folders.length < 2) { el.innerHTML = emptyIns("你能看到的只有一个文件夹，没有部门之间的关系可画"); return; }
-    el.innerHTML = `<div class="graph-wrap"><svg id="csvg"></svg><div class="gside" id="cside"><div class="muted">圆越大，会越多；线越粗，两个部门一起开的会、共同关心的话题越多。<br>把鼠标放到线上看它们一起关心什么，点圆圈看这个部门的重点。</div></div></div>`;
-    const svg = $("#csvg"); const W = svg.clientWidth || 900, H = svg.clientHeight || 600; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const R = Math.min(W, H) / 2 - 70, cx = W / 2, cy = H / 2;
-    const maxC = Math.max(...d.folders.map((f) => f.count)), maxW = Math.max(1, ...d.links.map((l) => l.w));
-    const pos = {};
-    d.folders.forEach((f, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / d.folders.length; pos[f.name] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a, r: 10 + 26 * Math.sqrt(f.count / maxC), f }; });
-    const gl = svgEl("g"); const gn = svgEl("g"); svg.appendChild(gl); svg.appendChild(gn);
-    const col = (g) => g === "板块" ? "#4f63d9" : g === "上海食品" ? "#16a3a0" : "#ee8a2f";
-    const side = $("#cside");
-    const paths = d.links.map((l, i) => {
-      const a = pos[l.s], b = pos[l.t]; if (!a || !b) return null;
-      const p = svgEl("path", { d: `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`, fill: "none", stroke: "url(#lg)", "stroke-width": 1 + 12 * (l.w / maxW), "stroke-opacity": 0.5, "stroke-linecap": "round", class: "clink" });
-      p.style.strokeDasharray = "2000"; p.style.strokeDashoffset = "2000"; p.style.transition = `stroke-dashoffset 1.2s ease ${i * 0.04}s`;
-      p.onmouseenter = () => { p.setAttribute("stroke-opacity", 0.9); side.innerHTML = `<div class="gs-h">${esc(l.s)} ⇄ ${esc(l.t)}</div><div>一起开过 <b>${l.meetings}</b> 场会，共同关心 <b>${l.common}</b> 个话题 / 客户 / 产品</div><div class="tags" style="margin-top:8px">${l.top.map((t) => `<span class="tag biz">${esc(t)}</span>`).join("")}</div>`; };
-      p.onmouseleave = () => p.setAttribute("stroke-opacity", 0.5);
-      gl.appendChild(p); return p;
-    });
-    const defs = svgEl("defs"); const lg = svgEl("linearGradient", { id: "lg" }); lg.appendChild(svgEl("stop", { offset: "0", "stop-color": "#7c8ce8" })); lg.appendChild(svgEl("stop", { offset: "1", "stop-color": "#5cc7c2" })); defs.appendChild(lg); svg.insertBefore(defs, svg.firstChild);
+    if (d.depts.length < 2) { el.innerHTML = emptyIns("你能看到的只有一个部门，没有部门之间的关系可看"); return; }
+    if (!CB.viewed) { CB.viewed = true; ckTrack("collab", "view"); }
+    const sm = d.summary, gcol = (g) => CB_COL[g] || "#8e8e93";
+    const dept = Object.fromEntries(d.depts.map((x) => [x.name, x]));
+    el.innerHTML = `<div class="cockpit2 cb">
+      <div class="ck-head"><div class="ck-sum"><span class="ck-range">近 ${d.days} 天</span>
+        <span><b>${sm.depts}</b> 个部门</span><span><b>${sm.joint}</b> 场跨部门会议<small class="muted">（占 ${Math.round(sm.joint_rate * 100)}%）</small></span>
+        <span><b>${sm.issues}</b> 个跨部门议题</span><span><b>${sm.gaps}</b> 个没有共同会议</span></div>
+        <div class="ck-flags"><span class="flag"><i class="lgd" style="background:${CB_COL.板块}"></i>业务板块</span><span class="flag"><i class="lgd" style="background:${CB_COL.上海食品}"></i>上海食品职能部门</span><span class="flag"><i class="lgd" style="background:${CB_COL.子公司}"></i>子公司</span></div></div>
+      <div class="ck-grid">
+        <section class="ck-card w7" data-card="collab-map"><div class="ck-ch"><h3>部门关系</h3><span>实线：一起开过会；虚线：只是关心相同的事。线越粗联系越紧。点部门看详情</span></div>
+          <div class="cb-map"><svg id="csvg"></svg></div></section>
+        <section class="ck-card w5" data-card="collab-side"><div id="cside"></div></section>
+        <section class="ck-card w12" data-card="collab-issues"><div class="ck-ch"><h3>跨部门议题</h3><span>同一个客户、平台、产品或话题，有两个以上部门都在谈（每个部门至少 2 场会）。“没有共同会议”是说这些部门的会都是各开各的，可能需要对齐</span></div>
+          <div class="cb-filter" id="cbFilter"></div><div id="cbIssues"></div></section>
+      </div></div>`;
+
+    // ---- 关系图：业务板块和上海食品职能部门在上半圈，子公司在下半圈；只画重要的线
+    const svg = $("#csvg"); const W = svg.clientWidth || 700, H = Math.max(420, svg.clientHeight || 460); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    // 椭圆排布，左右留出放部门名字的位置，避免名字被切掉
+    const cx = W / 2, cy = H / 2, RX = Math.max(80, W / 2 - 140), RY = Math.max(80, H / 2 - 50);
+    const fn = d.depts.filter((x) => x.group === "上海食品"), bot = d.depts.filter((x) => x.group === "子公司");
+    const biz = d.depts.filter((x) => x.group === "板块"), half = Math.ceil(fn.length / 2);
+    const top = [...fn.slice(0, half), ...biz, ...fn.slice(half)];   // 业务板块放在上方正中
+    const pos = {}, maxC = Math.max(...d.depts.map((x) => x.count));
+    const place = (arr, a0, a1) => arr.forEach((x, i) => { const a = arr.length === 1 ? (a0 + a1) / 2 : a0 + (a1 - a0) * i / (arr.length - 1); pos[x.name] = { x: cx + RX * Math.cos(a), y: cy + RY * Math.sin(a), a, r: 9 + 22 * Math.sqrt(x.count / maxC), d: x }; });
+    if (bot.length) { place(top, -Math.PI * 0.95, -Math.PI * 0.05); place(bot, Math.PI * 0.12, Math.PI * 0.88); }
+    else place(d.depts, -Math.PI / 2, Math.PI * 1.5 - 2 * Math.PI / d.depts.length);
+    const gl = svgEl("g"), gn = svgEl("g"); svg.appendChild(gl); svg.appendChild(gn);
+    const shown = d.pairs.filter((p) => p.on_graph), maxS = Math.max(1, ...shown.map((p) => p.score));
+    const lines = shown.map((p) => {
+      const a = pos[p.a], b = pos[p.b]; if (!a || !b) return null;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, k = 0.35;
+      const e = svgEl("path", { d: `M${a.x},${a.y} Q${mx + (cx - mx) * k * 2},${my + (cy - my) * k * 2} ${b.x},${b.y}`, fill: "none", stroke: p.joint ? "#7c8ce8" : "#b9bfd0",
+        "stroke-width": 1.2 + 9 * (p.score / maxS), "stroke-opacity": 0.55, "stroke-linecap": "round", "stroke-dasharray": p.joint ? "" : "5 5", class: "clink" });
+      e.dataset.a = p.a; e.dataset.b = p.b;
+      const hit = svgEl("path", { d: e.getAttribute("d"), fill: "none", stroke: "transparent", "stroke-width": 14, style: "cursor:pointer" });
+      hit.onclick = (ev) => { ev.stopPropagation(); showPair(p); };
+      gl.appendChild(e); gl.appendChild(hit); return e;
+    }).filter(Boolean);
     for (const p of Object.values(pos)) {
-      const g = svgEl("g", { class: "gnode", transform: `translate(${p.x},${p.y})` });
-      g.appendChild(svgEl("circle", { r: p.r, fill: col(p.f.group), "fill-opacity": 0.9, stroke: "#fff", "stroke-width": 2 }));
-      const lx = Math.cos(p.a) * (p.r + 8), ly = Math.sin(p.a) * (p.r + 8);
-      const t = svgEl("text", { x: lx, y: ly + 4, "text-anchor": Math.abs(Math.cos(p.a)) < 0.3 ? "middle" : Math.cos(p.a) > 0 ? "start" : "end", "font-size": 13, "font-weight": 600, fill: "#2a2a2c" }); t.textContent = `${p.f.name} ${p.f.count}`; g.appendChild(t);
-      g.onclick = () => { side.innerHTML = `<div class="gs-h"><span class="dot" style="background:${col(p.f.group)}"></span>${esc(p.f.name)}<span class="muted">${p.f.count} 场</span></div><div class="muted" style="margin-bottom:6px">最常谈到</div><div class="tags">${p.f.top.map((t) => `<span class="tag biz">${esc(t)}</span>`).join("")}</div>`
-        + `<div class="muted" style="margin:10px 0 6px">联系最紧的部门</div>` + d.links.filter((l) => l.s === p.f.name || l.t === p.f.name).slice(0, 5).map((l) => `<div class="li"><b>${esc(l.s === p.f.name ? l.t : l.s)}</b> · ${l.meetings} 场共同会议 · ${esc(l.top.slice(0, 3).join("、"))}</div>`).join(""); };
-      gn.appendChild(g);
+      const g = svgEl("g", { class: "gnode", transform: `translate(${p.x},${p.y})`, style: "cursor:pointer" });
+      g.appendChild(svgEl("circle", { r: p.r, fill: gcol(p.d.group), "fill-opacity": 0.9, stroke: "#fff", "stroke-width": 2 }));
+      const c = Math.cos(p.a), sn = Math.sin(p.a), lx = c * (p.r + 8), ly = sn * (p.r + 8);
+      const t = svgEl("text", { x: lx, y: ly + (Math.abs(c) < 0.3 ? (sn < 0 ? -2 : 12) : 4), "text-anchor": Math.abs(c) < 0.3 ? "middle" : c > 0 ? "start" : "end", "font-size": 12.5, "font-weight": 600, fill: "#2a2a2c" });
+      t.textContent = p.d.name; const t2 = svgEl("tspan", { "font-weight": 400, fill: "#8e8e93", dx: 4 }); t2.textContent = p.d.count; t.appendChild(t2);
+      g.appendChild(t); g.onclick = (ev) => { ev.stopPropagation(); showDept(p.d.name); };
+      p.g = g; gn.appendChild(g);
     }
-    requestAnimationFrame(() => paths.forEach((p) => p && (p.style.strokeDashoffset = "0")));
+    svg.onclick = () => { CB.sel = null; overview(); };
+    const highlight = (names, pair) => {
+      const on = (n) => !names || names.includes(n);
+      Object.values(pos).forEach((p) => p.g.style.opacity = on(p.d.name) ? 1 : 0.25);
+      lines.forEach((e) => { const hit = pair ? (e.dataset.a === pair[0] && e.dataset.b === pair[1]) : names ? (names.includes(e.dataset.a) && names.includes(e.dataset.b)) || (names.length === 1 && (e.dataset.a === names[0] || e.dataset.b === names[0])) : true; e.style.opacity = hit ? 1 : 0.1; });
+    };
+
+    // ---- 右侧面板
+    const side = $("#cside");
+    const chip = (t) => `<span class="cb-chip">${shapeIcon(t.type)}${esc(t.name)}${t.n != null ? `<small>${t.n}</small>` : ""}</span>`;
+    const pairRow = (p, i) => `<div class="cb-pair" data-pi="${i}"><div class="cb-pn"><span>${esc(p.a)}</span><i>⇄</i><span>${esc(p.b)}</span></div>
+      <div class="cb-pm">${p.joint ? `<b>${p.joint}</b> 场共同会议 · ` : '<span class="cb-gap">没有共同会议</span> · '}共同关注 ${p.shared} 项</div>
+      <div class="cb-pt">${p.top.slice(0, 4).map((t) => `<span>${shapeIcon(t.type)}${esc(t.name)}</span>`).join("")}</div></div>`;
+    function overview() {
+      highlight(null);
+      side.innerHTML = `<div class="ck-ch"><h3>联系最紧的部门</h3><span>按共同会议和共同关注排序；点一行看详情</span></div>
+        <div class="ck-cb">${d.pairs.slice(0, 8).map(pairRow).join("") || ckEmpty("没有明显的部门联系")}</div>`;
+      $$(".cb-pair", side).forEach((r) => r.onclick = () => showPair(d.pairs[+r.dataset.pi]));
+    }
+    function back() { return `<button class="lk cb-back">← 返回总览</button>`; }
+    function bindBack() { $(".cb-back", side).onclick = () => { CB.sel = null; overview(); }; $$("[data-m]", side).forEach((x) => x.onclick = () => { ckTrack("collab", "open"); openMeetingModal(+x.dataset.m); }); }
+    function showPair(p) {
+      ckTrack("collab", "pair"); highlight([p.a, p.b], [p.a, p.b]);
+      side.innerHTML = `${back()}<div class="ck-ch" style="margin-top:6px"><h3>${esc(p.a)} ⇄ ${esc(p.b)}</h3></div>
+        <div class="cb-kv"><div><b>${p.joint}</b><span>共同会议</span></div><div><b>${p.shared}</b><span>共同关注</span></div></div>
+        <div class="cb-sub">一起关心的事 <span>（左：${esc(p.a)} 场次 / 右：${esc(p.b)} 场次）</span></div>
+        ${p.top.map((t) => `<div class="cb-bar">${shapeIcon(t.type)}<span class="cb-bn">${esc(t.name)}</span><span class="cb-bv">${t.a}</span><span class="cb-bt"><i style="width:${Math.round(t.a / (t.a + t.b) * 100)}%;background:${gcol(dept[p.a].group)}"></i><i style="background:${gcol(dept[p.b].group)}"></i></span><span class="cb-bv">${t.b}</span></div>`).join("") || ckEmpty("没有")}
+        <div class="cb-sub">共同会议</div>${p.meetings.length ? p.meetings.map(srcLine).join("") : ckEmpty("没有同时归到这两个部门的会")}`;
+      bindBack();
+    }
+    function showDept(name) {
+      const x = dept[name]; ckTrack("collab", "dept"); highlight([name]);
+      side.innerHTML = `${back()}<div class="ck-ch" style="margin-top:6px"><h3><span class="dot" style="background:${gcol(x.group)}"></span>${esc(name)}</h3><span>${x.group}</span></div>
+        <div class="cb-kv"><div><b>${x.count}</b><span>场会</span></div><div><b>${x.joint}</b><span>跨部门会议</span></div><div><b>${Math.round(x.joint_rate * 100)}%</b><span>跨部门比例</span></div></div>
+        <div class="cb-sub">和谁联系最多</div>${x.partners.map((p) => `<div class="cb-pp" data-p="${esc(p.name)}"><b>${esc(p.name)}</b><span>${p.joint ? p.joint + " 场共同会议" : '<span class="cb-gap">没有共同会议</span>'} · ${esc(p.top.join("、"))}</span></div>`).join("") || ckEmpty("没有")}
+        <div class="cb-sub">最常谈到</div><div class="cb-chips">${x.top.map(chip).join("") || "—"}</div>
+        <div class="cb-sub">只有这个部门在谈 <span>（七成以上提及都在这里）</span></div><div class="cb-chips">${x.special.map(chip).join("") || '<span class="muted">没有</span>'}</div>`;
+      $$(".cb-pp", side).forEach((r) => r.onclick = () => { const p = d.pairs.find((q) => (q.a === name && q.b === r.dataset.p) || (q.b === name && q.a === r.dataset.p)); if (p) showPair(p); });
+      bindBack();
+    }
+    overview();
+
+    // ---- 跨部门议题
+    const types = ["客户", "平台", "产品", "竞品", "项目", "区域", "话题"].filter((t) => d.issues.some((x) => x.type === t));
+    let showAll = false;
+    const drawIssues = () => {
+      $("#cbFilter").innerHTML = [["all", `全部 ${d.issues.length}`], ["gap", `没有共同会议 ${sm.gaps}`], ...types.map((t) => [t, t])].map(([k, n]) => `<button data-f="${k}" class="${CB.filter === k ? "on" : ""}">${k !== "all" && k !== "gap" ? shapeIcon(k) : ""}${n}</button>`).join("");
+      $$("#cbFilter button").forEach((b) => b.onclick = () => { CB.filter = b.dataset.f; showAll = false; ckTrack("collab", "filter"); drawIssues(); });
+      const full = d.issues.filter((x) => CB.filter === "all" || (CB.filter === "gap" ? x.status === "各自在谈" : x.type === CB.filter));
+      const list = showAll ? full : full.slice(0, 12);
+      const box = $("#cbIssues");
+      box.innerHTML = list.length ? list.map((x, i) => {
+        const tot = x.depts.reduce((s, y) => s + y.n, 0);
+        return `<div class="cbi" data-i="${d.issues.indexOf(x)}"><div class="cbi-row">
+          <span class="cbi-n">${shapeIcon(x.type)}${esc(x.name)}<small>${x.type}</small></span>
+          <span class="cbi-bar">${x.depts.map((y) => `<i title="${esc(y.name)} ${y.n} 场" style="flex:${y.n};background:${gcol((dept[y.name] || {}).group)}"></i>`).join("")}</span>
+          <span class="cbi-d">${x.depts.slice(0, 4).map((y) => `${esc(y.name)} <b>${y.n}</b>`).join("　")}${x.depts.length > 4 ? `　等 ${x.depts.length} 个部门` : ""}</span>
+          <span class="cbi-s ${x.joint ? "ok" : "gap"}">${x.joint ? `${x.joint} 场共同会议` : "没有共同会议"}</span><span class="cbi-l">${mmdd(x.last)}</span></div>
+          <div class="cbi-more" hidden>${x.depts.map((y) => `<div class="cbi-g"><div class="cbi-gh"><i class="lgd" style="background:${gcol((dept[y.name] || {}).group)}"></i>${esc(y.name)}<span>${y.n} 场</span></div>${(x.by_dept[y.name] || []).map(srcLine).join("")}</div>`).join("")}</div></div>`;
+      }).join("") + (full.length > list.length ? `<button class="lk cb-more" id="cbMore">再看 ${full.length - list.length} 个</button>` : "") : ckEmpty("没有符合的议题");
+      const more = $("#cbMore"); if (more) more.onclick = () => { showAll = true; drawIssues(); };
+      $$(".cbi-row", box).forEach((r) => r.onclick = () => {
+        const it = d.issues[+r.parentNode.dataset.i], more = r.nextElementSibling; more.hidden = !more.hidden;
+        if (!more.hidden) { ckTrack("collab", "issue"); highlight(it.depts.map((y) => y.name)); } else highlight(null);
+      });
+      $$("[data-m]", box).forEach((x) => x.onclick = (ev) => { ev.stopPropagation(); ckTrack("collab", "open"); openMeetingModal(+x.dataset.m); });
+    };
+    drawIssues();
   }
 
   // ------------------------------------------------------------ 周报月报
@@ -833,8 +926,8 @@
     $("#exGo").onclick = () => exGo(false); $("#exRedo").onclick = () => exGo(true);
   }
   const fmtTok = (n) => n >= 1e8 ? (n / 1e8).toFixed(2) + " 亿" : n >= 1e4 ? (n / 1e4).toFixed(1) + " 万" : String(n);
-  const CK_NAMES = { cockpit: "驾驶舱", attention: "需要关注", momentum: "热度变化", decisions: "定下来的事", numbers: "会上提到的数字", pulse: "部门动态", rhythm: "会议节奏" };
-  const CK_ACTS = { view: "打开", period: "切换时间", folder: "选部门", open: "点开会议", ask: "追问", expand: "展开原会议", drill: "点部门下钻" };
+  const CK_NAMES = { collab: "部门协作", cockpit: "驾驶舱", attention: "需要关注", momentum: "热度变化", decisions: "定下来的事", numbers: "会上提到的数字", pulse: "部门动态", rhythm: "会议节奏" };
+  const CK_ACTS = { view: "打开", period: "切换时间", folder: "选部门", open: "点开会议", ask: "追问", expand: "展开原会议", drill: "点部门下钻", pair: "看部门对", dept: "看部门", issue: "展开议题", filter: "筛选" };
   async function loadCkUse() {
     const el = $("#ckUse"); if (!el) return;
     let r; try { r = await api("api/admin/cockpit-usage"); } catch (e) { el.textContent = e.message; return; }

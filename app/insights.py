@@ -1,4 +1,4 @@
-"""可视化用的数据（都按提问人权限过滤）：知识图谱、部门协作、话题河流（经营驾驶舱在 cockpit.py）。
+"""可视化用的数据（都按提问人权限过滤）：知识图谱、话题河流（经营驾驶舱在 cockpit.py，部门协作在 collab.py）。
 只用到部门 / 话题 / 客户 / 产品 / 竞品 / 项目 / 区域这一层，不出现人名（用户要求）。数据来自 extract.py 的 fact 表。"""
 import collections
 import datetime as dt
@@ -94,37 +94,6 @@ def node_meetings(u: dict, node: str, days: int = 90) -> list[dict]:
                f"(SELECT 1 FROM fact f WHERE f.meeting_id = m.id AND f.kind IN ('entity', 'topic') AND f.text = ?)")
         args = [*a, name]
     return db.q(sql + " ORDER BY m.start_time DESC LIMIT 60", args)
-
-
-def collab(u: dict, days: int = 90) -> dict:
-    """部门协作：两个文件夹之间——同一场会同时归两边的次数，以及共同关心的话题/客户"""
-    w, a = _scope(u, days)
-    nodes, folders, times = _facts(w, a)
-    allowed = set(access.folders_for(u))
-    fcnt = collections.Counter()
-    shared = collections.Counter()
-    fnodes = collections.defaultdict(collections.Counter)
-    for mid in times:
-        fs = sorted(set(f for f in folders.get(mid, []) if f in allowed))
-        for f in fs:
-            fcnt[f] += 1
-            for n in nodes.get(mid, ()):
-                fnodes[f][n] += 1
-        for x, y in itertools.combinations(fs, 2):
-            shared[(x, y)] += 1
-    links = []
-    fl = list(fcnt)
-    for x, y in itertools.combinations(sorted(fl), 2):
-        common = set(fnodes[x]) & set(fnodes[y])
-        topics = sorted(common, key=lambda n: -(fnodes[x][n] + fnodes[y][n]))[:6]
-        score = shared[(x, y)] * 3 + len(common)
-        if score:
-            links.append({"s": x, "t": y, "meetings": shared[(x, y)], "common": len(common),
-                          "top": [f"{n[1]}" for n in topics], "w": score})
-    links.sort(key=lambda l: -l["w"])
-    return {"folders": [{"name": f, "count": c, "group": "板块" if f == rules.BIZ else ("上海食品" if f in rules.FUNC else "子公司"),
-                         "top": [n[1] for n, _ in fnodes[f].most_common(5)]} for f, c in fcnt.most_common()],
-            "links": links[:60], "days": days}
 
 
 def river(u: dict, weeks: int = 16, top: int = 8, kind: str = "话题") -> dict:

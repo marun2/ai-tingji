@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from urllib.parse import quote
 
-from . import access, chunks, cockpit, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
+from . import access, chunks, cockpit, collab, db, embed, exporter, extract, ingest, insights, llm, qa, reports, rules, synonyms, terms
 
 BASE = pathlib.Path(__file__).resolve().parent
 UPLOADS = db.DATA_DIR / "uploads"
@@ -538,7 +538,11 @@ async def ins_node(req):
 
 async def ins_collab(req):
     u = await run(user, req)
-    return ok(await run(insights.collab, u, _int(req.query_params.get("days"), 90, 7, 730)))
+    try:
+        days = max(7, min(730, int(req.query_params.get("days") or 90)))
+    except ValueError:
+        days = 90
+    return ok(await run(collab.build, u, days))
 
 
 async def ins_river(req):

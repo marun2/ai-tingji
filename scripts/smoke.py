@@ -226,7 +226,11 @@ def main():
     terms.merge("叮咚", "叮咚买菜")
     check(db.q1("SELECT 1 FROM fact WHERE meeting_id = ? AND text = '叮咚买菜'", (m_biz,)) is not None and synonyms.canonical("叮咚") == "叮咚买菜", "在图谱里合并两个词，已抽取的名称跟着统一")
     terms.merge("叮咚买菜", "叮咚")
-    check(isinstance(insights.collab(board, days=730)["folders"], list) and isinstance(insights.river(board)["series"], list), "部门协作、话题河流能出数据")
+    from app import collab
+    cb = collab.build(board, days=730)
+    check(isinstance(cb["depts"], list) and isinstance(cb["issues"], list) and "gaps" in cb["summary"] and isinstance(insights.river(board)["series"], list), "部门协作、话题河流能出数据")
+    cbl = collab.build(lead, days=730)
+    check(all(x["name"] == rules.BIZ for x in cbl["depts"]) and not cbl["pairs"], "部门负责人的部门协作只有研发市场销售")
     print("经营驾驶舱")
     from app import cockpit
     biz_day = dt.date.fromisoformat(db.q1("SELECT start_time FROM meeting WHERE id = ?", (m_biz,))["start_time"][:10])
