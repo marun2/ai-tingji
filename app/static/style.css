@@ -609,3 +609,32 @@ select.role, .form-row input { border-color: var(--line-strong); border-radius: 
   .kb.rep2 .preview { display: block; }
   .kb.rep2 .tree { max-height: 210px; }
 }
+
+/* ---------------- 左侧栏 v2（2026-11-25）：分组、字更清楚、下方放数据情况和最近看过 ---------------- */
+@media (min-width: 801px) { .side { width: 224px; } }
+.brand-name { font-size: 15.5px; font-weight: 650; color: #1d1d1f; }
+.brand-sub { font-size: 12px; color: #6e6e73; }
+.nav { gap: 1px; }
+.nav-h { font-size: 11.5px; color: #8e8e93; font-weight: 500; letter-spacing: .5px; padding: 14px 12px 5px; }
+.nav-h:first-child { padding-top: 6px; }
+.nav button { font-size: 14.5px; color: #3a3a3c; padding: 9px 12px; gap: 11px; font-weight: 450; }
+.nav button svg { width: 17px; height: 17px; stroke: #6e6e73; stroke-width: 1.8; }
+.nav button:hover { color: #1d1d1f; }
+.nav button:hover svg { stroke: #3a3a3c; }
+.nav button.on { color: #1d1d1f; font-weight: 600; }
+.nav button.on svg { stroke: #4f63d9; }
+.side-fill { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
+.sf-box { border-top: 1px solid #e3e2de; padding: 12px 6px 0; }
+.sf-box:empty { display: none; }
+.sf-h { font-size: 11.5px; color: #8e8e93; font-weight: 500; letter-spacing: .5px; padding: 0 6px 6px; }
+.sf-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: #55555a; padding: 4px 6px; border-radius: 7px; }
+.sf-row b { font-weight: 600; color: #1d1d1f; font-variant-numeric: tabular-nums; }
+.sf-row b.warn { color: #b26a00; }
+.sf-row.click { cursor: pointer; }
+.sf-row.click:hover { background: #ebeae7; }
+.sf-rc { font-size: 12.5px; color: #3a3a3c; padding: 5px 6px; border-radius: 7px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-rc span { color: #8e8e93; margin-right: 7px; font-variant-numeric: tabular-nums; }
+.sf-rc:hover { background: #ebeae7; color: #1d1d1f; }
+.me { margin-top: auto; }
+.me > div:last-child > div:first-child { font-weight: 600; color: #1d1d1f; font-size: 13.5px; }
+@media (max-width: 800px) { .nav-h, .side-fill { display: none; } .nav button { font-size: 14px; padding: 7px 10px; } .search { flex-basis: 100%; } }

@@ -63,6 +63,24 @@ async def me(req):
     return ok({**u, "folders": access.folders_for(u), "llm": llm.configured() if u["is_admin"] else None})
 
 
+async def status(req):
+    """左侧栏的“数据情况”：最新一场会的日期（按权限）、最近导入是几天前、待确认几场（只给能看的人）"""
+    u = await run(user, req)
+    access.require(u)
+
+    def go():
+        import datetime as _dt
+        cond, params = access.meeting_filter(u)
+        latest = db.q1(f"SELECT MAX(m.start_time) AS t FROM meeting m WHERE {cond}", params)["t"]
+        imp = db.q1("SELECT created_at FROM import_batch WHERE status = 'done' ORDER BY id DESC LIMIT 1")
+        days = (_dt.date.today() - _dt.date.fromisoformat(imp["created_at"][:10])).days if imp else None
+        out = {"latest": (latest or "")[:10] or None, "days_since_import": days, "stale": days is not None and days > 7}
+        if u["see_all"]:
+            out["pending"] = db.q1("SELECT COUNT(*) AS n FROM meeting WHERE status = 'pending'")["n"]
+        return out
+    return ok(await run(go))
+
+
 # ---------------------------------------------------------------- 目录与会议
 def _tree(u):
     access.require(u)
@@ -703,6 +721,7 @@ async def lifespan(_app):
 routes = [
     Route("/healthz", healthz),
     Route("/api/me", me),
+    Route("/api/status", status),
     Route("/api/tree", tree),
     Route("/api/meetings", meetings),
     Route("/api/meetings/confirm", confirm_batch, methods=["POST"]),

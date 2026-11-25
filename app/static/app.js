@@ -86,12 +86,40 @@
   const plain = (t) => String(t || "").replace(/\*\*|__|`/g, "").replace(/^\s*(#{1,6}|>|[-*+]|\d+[.、)])\s+/gm, "").replace(/\s*\n\s*/g, " ").trim();
   const folderTag = (f) => `<span class="tag ${f === "研发市场销售" ? "biz" : ""}">${esc(f)}</span>`;
 
+  // ------------------------------------------------------------ 左侧栏：数据状态 + 最近看过（只存在自己的浏览器里）
+  async function sideStatus() {
+    const el = $("#sfStatus"); if (!el) return;
+    let d; try { d = await api("api/status"); } catch (e) { el.hidden = true; return; }
+    const ago = (n) => n == null ? "—" : n === 0 ? "今天" : n === 1 ? "昨天" : `${n} 天前`;
+    el.innerHTML = `<div class="sf-h">数据情况</div>
+      <div class="sf-row"><span>最新会议</span><b>${d.latest ? esc(d.latest.slice(5).replace("-", "/")) : "—"}</b></div>
+      <div class="sf-row"><span>最近导入</span><b class="${d.stale ? "warn" : ""}">${ago(d.days_since_import)}</b></div>
+      ${d.pending ? `<div class="sf-row click" id="sfPend"><span>待确认</span><b class="warn">${d.pending} 场</b></div>` : ""}`;
+    const p = $("#sfPend"); if (p) p.onclick = () => { S.sel = { folder: "", month: "", pending: true }; go("kb"); };
+  }
+  const RECENT_KEY = "tj.recent";
+  const getRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { return []; } };
+  function addRecent(m) {
+    if (!m || !m.id) return;
+    const list = [{ id: m.id, t: m.title, d: (m.start_time || "").slice(5, 10) }, ...getRecent().filter((x) => x.id !== m.id)].slice(0, 6);
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch (e) { /* 忽略 */ }
+    drawRecent();
+  }
+  function drawRecent() {
+    const el = $("#sfRecent"); if (!el) return;
+    const list = getRecent();
+    el.hidden = !list.length;
+    el.innerHTML = `<div class="sf-h">最近看过</div>` + list.map((x) => `<div class="sf-rc" data-m="${x.id}" title="${esc(x.t)}"><span>${esc((x.d || "").replace("-", "/"))}</span>${esc((x.t || "").replace(/^\d{1,2}[-./]\d{1,2}\s*/, ""))}</div>`).join("");
+    $$(".sf-rc", el).forEach((r) => r.onclick = () => openMeetingModal(+r.dataset.m));
+  }
+
   // ------------------------------------------------------------ 启动
   async function boot() {
     try { S.me = await api("api/me"); }
     catch (e) { app.innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>${esc(e.message)}</div></div>`; return; }
     $("#me").innerHTML = `<div class="av">${esc((S.me.name || "?").slice(0, 1))}</div><div style="min-width:0"><div>${esc(S.me.name)}</div><div class="role">${esc(S.me.role_label)}</div></div>`;
-    $("#navAdmin").hidden = !S.me.is_admin;
+    $("#navAdmin").hidden = $("#navAdminH").hidden = !S.me.is_admin;
+    sideStatus(); drawRecent();
     if (S.me.role === "none") { app.innerHTML = `<div class="empty-state"><div><div class="big">${GLYPH}</div>你没有查看听记的权限，请联系管理员</div></div>`; return; }
     $$(".nav button").forEach((b) => b.onclick = () => go(b.dataset.view));
     $("#searchForm").onsubmit = (e) => { e.preventDefault(); doSearch($("#searchInput").value); };
@@ -103,7 +131,7 @@
     if (view === "admin") renderAdmin(); else if (view === "ask") renderAsk(); else if (view === "reports") renderReports(); else if (view === "insight") renderInsight(); else renderKb();
   }
 
-  // ------------------------------------------------------------ 知识库
+  // ------------------------------------------------------------ 会议档案（2026-11-25 前叫“知识库”）
   async function renderKb() {
     app.innerHTML = `<div class="kb" id="kb"><aside class="col tree" id="tree"></aside><section class="col list" id="list"></section><section class="col preview" id="preview"></section></div>`;
     await loadTree();
@@ -114,7 +142,7 @@
   }
   async function loadTree() {
     S.tree = await api("api/tree");
-    const sub = S.tree.total !== undefined ? `会议知识库 · 共 ${S.tree.total} 场` : "会议知识库 · 研发市场销售";
+    const sub = S.tree.total !== undefined ? `均瑶健康 · ${S.tree.total} 场会议` : "均瑶健康 · 研发市场销售";
     $("#brandSub").textContent = sub;
     drawTree();
   }
@@ -228,6 +256,7 @@
     $("#kb").classList.add("show-doc");
     $("#preview").innerHTML = `<div class="empty-state muted">加载中…</div>`;
     try { S.doc = await api("api/meetings/" + id); } catch (e) { $("#preview").innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+    addRecent(S.doc);
     renderPreview();
   }
   function renderPreview() {
@@ -363,6 +392,7 @@
     s = s || { text: "", kind: "summary" };
     let m;
     try { m = await api("api/meetings/" + meetingId); } catch (e) { toast(e.message, true); return; }
+    addRecent(m);
     const box = $("#modal");
     const hl = esc(s.text.slice(0, 60));
     box.innerHTML = `<div class="box doc-modal"><div class="dm-head"><div><div class="dm-t">${esc(m.title)}</div><div class="muted" style="font-size:12.5px">${esc(m.start_time || "日期不详")} · ${(m.folders || []).join("、")}</div></div>
@@ -434,7 +464,7 @@
         <div class="att-t">${esc(x.text)}</div>
         <div class="att-act"><button class="lk" data-src="${i}">看原会议（${x.sources.length}）</button></div>
         <div class="att-src" id="attSrc${i}" hidden>${x.sources.map(srcLine).join("")}</div></div>`).join("") +
-        (c.total > c.items.length ? `<div class="ck-more">另有 ${c.total - c.items.length} 条只在单场会里提过，可在知识库里搜</div>` : "");
+        (c.total > c.items.length ? `<div class="ck-more">另有 ${c.total - c.items.length} 条只在单场会里提过，可在会议档案里搜</div>` : "");
     },
     momentum(c) {
       let k = 0;
@@ -899,7 +929,7 @@
       e.preventDefault();
       const x = await api(`api/imports/${a.dataset.empty}/empty`);
       const m = $("#modal");
-      m.innerHTML = `<div class="box" style="width:min(640px,94vw)"><h3>空记录（${x.items.length} 场，摘要和原文都几乎为空，不进知识库）</h3><div style="max-height:55vh;overflow:auto;font-size:13px">${x.items.map((i) => `<div style="padding:4px 0;border-bottom:1px solid var(--line)">${esc(i.start_time)} · ${esc(i.creator || "")} · ${esc(i.title)}</div>`).join("")}</div><div class="acts"><button class="btn" data-a="0">关闭</button></div></div>`;
+      m.innerHTML = `<div class="box" style="width:min(640px,94vw)"><h3>空记录（${x.items.length} 场，摘要和原文都几乎为空，不进会议档案）</h3><div style="max-height:55vh;overflow:auto;font-size:13px">${x.items.map((i) => `<div style="padding:4px 0;border-bottom:1px solid var(--line)">${esc(i.start_time)} · ${esc(i.creator || "")} · ${esc(i.title)}</div>`).join("")}</div><div class="acts"><button class="btn" data-a="0">关闭</button></div></div>`;
       m.hidden = false; m.onclick = (ev) => { if (ev.target.dataset.a !== undefined || ev.target === m) m.hidden = true; };
     });
     if (r.items.some((b) => b.status === "running")) pollTimer = setTimeout(loadBatches, 2000);
