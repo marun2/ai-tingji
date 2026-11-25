@@ -142,8 +142,7 @@
   }
   async function loadTree() {
     S.tree = await api("api/tree");
-    const sub = S.tree.total !== undefined ? `均瑶健康 · ${S.tree.total} 场会议` : "均瑶健康 · 研发市场销售";
-    $("#brandSub").textContent = sub;
+
     drawTree();
   }
   function drawTree() {
